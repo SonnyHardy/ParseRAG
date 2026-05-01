@@ -3,5 +3,10 @@ package com.sonny.parserag.repository;
 import com.sonny.parserag.entity.ApiKey;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ApiKeyRepository extends JpaRepository<ApiKey, Long> {
+import java.util.Optional;
+import java.util.UUID;
+
+public interface ApiKeyRepository extends JpaRepository<ApiKey, UUID> {
+
+    Optional<ApiKey> findByKeyHashAndActiveTrue(String keyHash);
 }
