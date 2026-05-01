@@ -4,6 +4,12 @@ spring:
   application:
     name: ParseRAG
 
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 50MB
+
   datasource:
     url: jdbc:postgresql://localhost:${POSTGRES_PORT}/${POSTGRES_DB}
     username: ${POSTGRES_USER}
@@ -15,7 +21,7 @@ spring:
       idle-timeout: 300000
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     show-sql: true
     properties:
       hibernate:
@@ -27,6 +33,21 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-
 server:
   port: ${SERVER_PORT:8080}
+
+# ── ParseRAG properties (AppProperties.java) ───────────────────
+parserag:
+  openai:
+    api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
+    model: gpt-4o-mini
+  vision:
+    enabled: true
+    confidence-threshold: 0.55
+    max-pages-per-document: 20
+  rate-limit:
+    free-requests-per-minute: 10
+    pro-requests-per-minute: 100
+  quota:
+    free-monthly-docs: 100
+    pro-monthly-docs: 5000
