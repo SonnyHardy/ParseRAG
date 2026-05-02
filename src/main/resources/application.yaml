@@ -36,18 +36,36 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
+logging:
+  level:
+    root: INFO
+    com.sonny.parserag: DEBUG
+
 # ── ParseRAG properties (AppProperties.java) ───────────────────
 parserag:
   openai:
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini
+
   vision:
     enabled: true
     confidence-threshold: 0.55
     max-pages-per-document: 20
+
   rate-limit:
     free-requests-per-minute: 10
+    starter-requests-per-minute: 30
     pro-requests-per-minute: 100
+    scale-requests-per-minute: 300
+
   quota:
     free-monthly-docs: 100
+    starter-monthly-docs: 1000
     pro-monthly-docs: 5000
+    scale-monthly-docs: 20000
+
+  page-limits:
+    max-pages-free: 100   # plan gratuit → 100 pages max
+    max-pages-starter: 300   # plan starter → 300 pages max
+    max-pages-pro: 500   # plan pro     → 500 pages max
+    max-pages-scale: 1000  # plan scale → 1000 pages max
