@@ -1,7 +1,11 @@
 package com.sonny.parserag.model.domain;
 
-import lombok.Data;
+import java.util.List;
 
-@Data
-public class ExtractedDocument {
-}
+public record ExtractedDocument(
+        String documentId,
+        int pageCount,
+        String detectedLanguage,
+        String title,
+        List<ExtractedPage> pages
+) {}

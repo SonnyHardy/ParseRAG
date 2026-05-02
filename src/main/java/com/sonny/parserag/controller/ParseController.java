@@ -1,7 +1,9 @@
 package com.sonny.parserag.controller;
 
+import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.pipeline.ParsePipelineService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -37,11 +39,12 @@ public class ParseController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<ParseResponse> parse(
-            @RequestParam("file") MultipartFile file
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest request
     ) {
-        log.info("POST /api/v1/parse — '{}' ({} bytes)",
-                file.getOriginalFilename(), file.getSize());
+        ApiKey apiKey = (ApiKey) request.getAttribute("apiKey");
+        log.info("POST /api/v1/parse — '{}' ({} bytes)", file.getOriginalFilename(), file.getSize());
 
-        return ResponseEntity.ok(parsePipelineService.process(file));
+        return ResponseEntity.ok(parsePipelineService.process(file, apiKey));
     }
 }
