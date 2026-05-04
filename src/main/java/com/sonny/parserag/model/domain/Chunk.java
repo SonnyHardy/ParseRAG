@@ -6,39 +6,43 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * Unité de texte extraite d'un document, prête à être
  * envoyée dans un vector store (Pinecone, Weaviate, Chroma…).
- * <p>
- * Chaque chunk porte un score de confiance (0.0 – 1.0)
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record Chunk(
 
-        String id,               // ex: "chunk_doc8f3a_001"
+        String id,
 
-        String text,             // texte extrait, nettoyé
+        String text,
 
-        ChunkType type,          // PARAGRAPH, TABLE, etc.
+        ChunkType type,
 
-        int page,                // numéro de page source (1-based)
+        int page,
 
-        double confidence,       // fiabilité de l'extraction (0.0 – 1.0)
+        @JsonProperty("char_start")
+        int charStart,
+
+        @JsonProperty("char_end")
+        int charEnd,
+
+        double confidence,
 
         @JsonProperty("fallback_used")
-        boolean fallbackUsed,    // true si GPT-4o mini a été utilisé
+        boolean fallbackUsed,
 
         @JsonProperty("table_json")
-        Object tableJson         // seulement si type = TABLE
+        Object tableJson
 ) {
 
-    /**
-     * Factory pour un chunk texte standard (sans données de tableau).
-     */
+    /** Factory pour un chunk texte standard (sans données de tableau). */
     public static Chunk of(
             String id,
             String text,
             ChunkType type,
             int page,
+            int charStart,
+            int charEnd,
             double confidence
     ) {
-        return new Chunk(id, text, type, page, confidence, false, null);
+        return new Chunk(id, text, type, page, charStart, charEnd, confidence, false, null);
     }
 }

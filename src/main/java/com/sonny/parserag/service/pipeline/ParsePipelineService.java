@@ -7,6 +7,7 @@ import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
+import com.sonny.parserag.service.processing.ChunkingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -15,7 +16,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -36,9 +36,11 @@ public class ParsePipelineService {
     private static final long   MAX_FILE_SIZE    = 50L * 1024 * 1024; // 50 MB
 
     private final PdfTextExtractorService pdfTextExtractorService;
+    private final ChunkingService chunkingService;
 
     public ParseResponse process(MultipartFile file, ApiKey apiKey) {
         Plan plan = apiKey != null ? apiKey.getPlan() : Plan.FREE;
+
         long startTime = System.currentTimeMillis();
         log.info("Pipeline start — file: '{}', size: {} bytes, plan: {}",
                 file.getOriginalFilename(), file.getSize(), plan);
@@ -47,9 +49,7 @@ public class ParsePipelineService {
         validateFile(file, bytes);
 
         ExtractedDocument doc = pdfTextExtractorService.extract(bytes, plan);
-
-        // Sprint 3 : chunks remplis par ChunkingService
-        List<Chunk> chunks = Collections.emptyList();
+        List<Chunk> chunks = chunkingService.chunk(doc);
 
         long processingMs = System.currentTimeMillis() - startTime;
         log.info("Pipeline done — docId: {}, pages: {}, lang: {}, time: {}ms",

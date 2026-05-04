@@ -64,6 +64,11 @@ parserag:
     pro-monthly-docs: 5000
     scale-monthly-docs: 20000
 
+  chunking:
+    max-chunk-size: 2000   # ≈ 512 tokens
+    overlap: 100
+    min-chunk-size: 30     # seuil filtre anti-artefacts
+
   page-limits:
     max-pages-free: 100   # plan gratuit → 100 pages max
     max-pages-starter: 300   # plan starter → 300 pages max
