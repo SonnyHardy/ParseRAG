@@ -23,6 +23,7 @@ public class AppProperties {
     private final Vision      vision      = new Vision();
     private final RateLimit   rateLimit   = new RateLimit();
     private final Quota       quota       = new Quota();
+    private final Chunking    chunking    = new Chunking();
     private final PageLimits  pageLimits  = new PageLimits();
 
     @Data
@@ -54,6 +55,13 @@ public class AppProperties {
         @Positive private int starterMonthlyDocs;
         @Positive private int proMonthlyDocs;
         @Positive private int scaleMonthlyDocs;
+    }
+
+    @Data
+    public static class Chunking {
+        @Positive private int maxChunkSize;
+        @Positive private int overlap;
+        @Positive private int minChunkSize;
     }
 
     @Data
