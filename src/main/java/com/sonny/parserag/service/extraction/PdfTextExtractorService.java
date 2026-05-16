@@ -389,13 +389,14 @@ public class PdfTextExtractorService {
         return false;
     }
 
-    // A line looks table-like when it has tabs or 3+ consecutive spaces at least twice
+    // Les tableaux seront traités plus tard lors de l'issue #9.
     private boolean looksLikeTable(String text) {
-        if (text == null || text.isBlank()) return false;
+        return false;
+        /*if (text == null || text.isBlank()) return false;
         long tabLines = text.lines()
                 .filter(line -> line.contains("\t") || line.matches(".*\\s{3,}.*\\s{3,}.*"))
                 .count();
-        return tabLines >= 2;
+        return tabLines >= 2;*/
     }
 
     private String detectLanguage(String text) {
