@@ -19,12 +19,13 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "parserag")
 public class AppProperties {
 
-    private final OpenAI      openai      = new OpenAI();
-    private final Vision      vision      = new Vision();
-    private final RateLimit   rateLimit   = new RateLimit();
-    private final Quota       quota       = new Quota();
-    private final Chunking    chunking    = new Chunking();
-    private final PageLimits  pageLimits  = new PageLimits();
+    private final OpenAI               openai               = new OpenAI();
+    private final Vision               vision               = new Vision();
+    private final RateLimit            rateLimit            = new RateLimit();
+    private final Quota                quota                = new Quota();
+    private final Chunking             chunking             = new Chunking();
+    private final PageLimits           pageLimits           = new PageLimits();
+    private final HeaderFooterCleaning headerFooterCleaning = new HeaderFooterCleaning();
 
     @Data
     public static class OpenAI {
@@ -62,6 +63,27 @@ public class AppProperties {
         @Positive private int maxChunkSize;
         @Positive private int overlap;
         @Positive private int minChunkSize;
+    }
+
+    /** Nettoyage header/footer en couches (cf. package service.headerfooter). */
+    @Data
+    public static class HeaderFooterCleaning {
+        private boolean enabled;
+
+        @Positive
+        private double blockVerticalGapPt;     // tolérance Y (pt) pour grouper les fragments d'une même ligne
+        @Min(0) @Max(1)
+        private double headerZoneRatio;        // un bloc est header SI y0/H < headerZoneRatio
+        @Min(0) @Max(1)
+        private double footerZoneRatio;        // un bloc est footer SI y1/H > 1 - footerZoneRatio
+        @Positive
+        private int    minRecurrentPages;      // couche récurrence : un pattern doit recurrer sur ≥ N pages (cappé à pageCount)
+
+        // ── Couche DBSCAN (secondaire) ──────────────────────────────────────
+        @Positive
+        private double dbscanEps;              // rayon de voisinage (features page-normalized dans [0,1])
+        @Positive
+        private int    dbscanMinSamples;       // taille min d'un noyau de cluster
     }
 
     @Data
