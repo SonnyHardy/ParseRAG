@@ -18,6 +18,7 @@ import java.util.List;
 public class ChunkingService {
 
     private final AppProperties appProperties;
+    private final ConfidenceCalculatorService confidenceCalculator;
 
     public List<Chunk> chunk(ExtractedDocument doc) {
         int maxChunkSize = appProperties.getChunking().getMaxChunkSize();
@@ -113,6 +114,7 @@ public class ChunkingService {
     private void addChunk(List<Chunk> result, String docId, int[] counter,
                           String text, ChunkType type, int page, int charStart, int charEnd) {
         String id = "chunk_%s_%03d".formatted(docId, counter[0]++);
-        result.add(Chunk.of(id, text, type, page, charStart, charEnd, 1.0));  // Todo: confidence à calculer lors de l'issue #8
+        double confidence = confidenceCalculator.calculate(text);
+        result.add(Chunk.of(id, text, type, page, charStart, charEnd, confidence));
     }
 }
