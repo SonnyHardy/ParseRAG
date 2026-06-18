@@ -20,6 +20,7 @@ import org.springframework.validation.annotation.Validated;
 public class AppProperties {
 
     private final OpenAI               openai               = new OpenAI();
+    private final Extraction           extraction           = new Extraction();
     private final Vision               vision               = new Vision();
     private final RateLimit            rateLimit            = new RateLimit();
     private final Quota                quota                = new Quota();
@@ -31,6 +32,12 @@ public class AppProperties {
     public static class OpenAI {
         private String apiKey;     // OPENAI_API_KEY
         private String model;
+    }
+
+    @Data
+    public static class Extraction {
+        /** Retire les colonnes de numéros de ligne en marge (copies de relecture/soumission). */
+        private boolean stripLineNumbers;
     }
 
     @Data

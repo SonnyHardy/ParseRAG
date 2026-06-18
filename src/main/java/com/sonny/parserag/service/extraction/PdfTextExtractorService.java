@@ -22,10 +22,14 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -59,6 +63,22 @@ public class PdfTextExtractorService {
     /** Largeur estimée d'un caractère espace (pt), utilisée pour reconstituer les écarts visuels. */
     private static final float SPACE_WIDTH_PT = 5f;
     private static final int   MAX_GAP_SPACES = 6;
+
+    // ── Retrait des numéros de ligne de marge (copies de relecture/soumission) ──────────
+    /** Un candidat numéro de ligne : entier court isolé. */
+    private static final Pattern LINE_NUMBER_PATTERN     = Pattern.compile("^\\d{1,4}$");
+    /** Percentile robuste pour estimer le bord du corps (ignore quelques fragments aberrants en marge). */
+    private static final float   BODY_EDGE_PERCENTILE    = 0.10f;
+    /** Marge (pt) en deçà du bord du corps pour qu'un numérique soit considéré « en marge extérieure ». */
+    private static final float   LINE_NUMBER_MARGIN_GAP_PT = 2f;
+    /** Tolérance X (pt) pour regrouper les numériques d'une même colonne de marge. */
+    private static final float   LINE_NUMBER_CLUSTER_X_TOL_PT = 6f;
+    /** Nombre minimal de numéros pour considérer une colonne (anti-coïncidence). */
+    private static final int     LINE_NUMBER_MIN_COUNT   = 15;
+    /** Densité minimale : la colonne doit couvrir ≥ 30% des baselines de la page. */
+    private static final float   LINE_NUMBER_MIN_DENSITY = 0.30f;
+    /** Fraction minimale de paires (triées par Y) où la valeur croît : une numérotation augmente vers le bas. */
+    private static final float   LINE_NUMBER_MONOTONIC_MIN = 0.70f;
 
     private final AppProperties appProperties;
 
@@ -169,6 +189,12 @@ public class PdfTextExtractorService {
         float pageWidth  = page.getMediaBox().getWidth();
         float pageHeight = page.getMediaBox().getHeight();
 
+        // Retire les colonnes de numéros de ligne en marge (copies de relecture) avant tout assemblage.
+        if (appProperties.getExtraction().isStripLineNumbers()) {
+            fragments = stripLineNumberColumns(fragments, pageHeight, pageNum);
+            if (fragments.isEmpty()) return "";
+        }
+
         float[] splits = detectColumnSplits(fragments, pageWidth, pageHeight);
 
         if (splits.length == 0) {
@@ -245,6 +271,134 @@ public class PdfTextExtractorService {
         float[] result = new float[splits.size()];
         for (int i = 0; i < splits.size(); i++) result[i] = splits.get(i);
         return result;
+    }
+
+    // =========================================================================
+    // Line-number column removal — copies de relecture / soumission
+    // =========================================================================
+
+    /**
+     * Retire les fragments formant une (ou deux) colonne(s) de numéros de ligne en marge.
+     * <p>
+     * Approche en 3 garde-fous pour ne jamais toucher du contenu (numéro de section
+     * « 2 Expected contributions », colonne numérique d'un tableau, numéro d'équation) :
+     * <ol>
+     *   <li><strong>marge extérieure</strong> : le numérique doit être strictement à gauche du
+     *       bord gauche du corps (ou à droite du bord droit), bord estimé par percentile robuste
+     *       des fragments non-numériques ;</li>
+     *   <li><strong>densité</strong> : la colonne couvre ≥ {@link #LINE_NUMBER_MIN_DENSITY} des
+     *       baselines de la page (et ≥ {@link #LINE_NUMBER_MIN_COUNT}) ;</li>
+     *   <li><strong>monotonie</strong> : triés par Y, les nombres croissent (une numérotation
+     *       augmente vers le bas) sur ≥ {@link #LINE_NUMBER_MONOTONIC_MIN} des paires.</li>
+     * </ol>
+     * Si aucune colonne ne valide ces trois critères, la liste est renvoyée inchangée.
+     */
+    private List<Fragment> stripLineNumberColumns(List<Fragment> fragments, float pageHeight, int pageNum) {
+        float yMin = pageHeight * Y_FILTER_TOP_RATIO;
+        float yMax = pageHeight * Y_FILTER_BOTTOM_RATIO;
+
+        List<Fragment> numerics  = new ArrayList<>();
+        List<Float>    bodyStart = new ArrayList<>();
+        List<Float>    bodyEnd   = new ArrayList<>();
+        for (Fragment f : fragments) {
+            if (LINE_NUMBER_PATTERN.matcher(f.text()).matches()) {
+                numerics.add(f);
+            } else if (f.y() >= yMin && f.y() <= yMax) {
+                bodyStart.add(f.xStart());
+                bodyEnd.add(f.xEnd());
+            }
+        }
+        if (numerics.size() < LINE_NUMBER_MIN_COUNT || bodyStart.isEmpty()) return fragments;
+
+        float bodyLeftEdge  = percentile(bodyStart, BODY_EDGE_PERCENTILE);
+        float bodyRightEdge = percentile(bodyEnd, 1f - BODY_EDGE_PERCENTILE);
+
+        int baselineCount = distinctBaselineCount(fragments);
+        int minCount = Math.max(LINE_NUMBER_MIN_COUNT, Math.round(LINE_NUMBER_MIN_DENSITY * baselineCount));
+
+        List<Fragment> leftCands  = new ArrayList<>();
+        List<Fragment> rightCands = new ArrayList<>();
+        for (Fragment f : numerics) {
+            if (f.xEnd() <= bodyLeftEdge - LINE_NUMBER_MARGIN_GAP_PT)        leftCands.add(f);
+            else if (f.xStart() >= bodyRightEdge + LINE_NUMBER_MARGIN_GAP_PT) rightCands.add(f);
+        }
+
+        Set<Fragment> toRemove = Collections.newSetFromMap(new IdentityHashMap<>());
+        collectLineNumberClusters(leftCands, minCount, toRemove);
+        collectLineNumberClusters(rightCands, minCount, toRemove);
+
+        if (toRemove.isEmpty()) return fragments;
+
+        List<Fragment> kept = new ArrayList<>(fragments.size());
+        for (Fragment f : fragments) if (!toRemove.contains(f)) kept.add(f);
+        log.debug("Page {} — stripped {} line-number fragments ({} kept)", pageNum, toRemove.size(), kept.size());
+        return kept;
+    }
+
+    /**
+     * Regroupe les candidats par colonne (X proche) et marque pour suppression ceux dont la
+     * colonne satisfait densité + monotonie.
+     */
+    private void collectLineNumberClusters(List<Fragment> candidates, int minCount, Set<Fragment> toRemove) {
+        if (candidates.size() < minCount) return;
+
+        List<Fragment> sorted = new ArrayList<>(candidates);
+        sorted.sort(Comparator.comparingDouble(Fragment::xStart));
+
+        List<Fragment> cluster = new ArrayList<>();
+        float anchorX = sorted.getFirst().xStart();
+        for (Fragment f : sorted) {
+            if (f.xStart() - anchorX <= LINE_NUMBER_CLUSTER_X_TOL_PT) {
+                cluster.add(f);
+            } else {
+                evaluateCluster(cluster, minCount, toRemove);
+                cluster = new ArrayList<>();
+                cluster.add(f);
+                anchorX = f.xStart();
+            }
+        }
+        evaluateCluster(cluster, minCount, toRemove);
+    }
+
+    /** Une colonne valide (assez dense + numérotation croissante vers le bas) est marquée pour retrait. */
+    private void evaluateCluster(List<Fragment> cluster, int minCount, Set<Fragment> toRemove) {
+        if (cluster.size() < minCount) return;
+
+        List<Fragment> byY = new ArrayList<>(cluster);
+        byY.sort(Comparator.comparingDouble(Fragment::y));
+        int increasing = 0;
+        for (int i = 1; i < byY.size(); i++) {
+            if (parseIntSafe(byY.get(i).text()) >= parseIntSafe(byY.get(i - 1).text())) increasing++;
+        }
+        double monotonicFraction = (double) increasing / (byY.size() - 1);
+        if (monotonicFraction >= LINE_NUMBER_MONOTONIC_MIN) {
+            toRemove.addAll(cluster);
+        }
+    }
+
+    private int parseIntSafe(String s) {
+        try { return Integer.parseInt(s); } catch (NumberFormatException e) { return Integer.MAX_VALUE; }
+    }
+
+    /** Valeur au percentile {@code p} (0..1) d'une liste de flottants. */
+    private float percentile(List<Float> values, float p) {
+        List<Float> sorted = new ArrayList<>(values);
+        Collections.sort(sorted);
+        int idx = Math.clamp(Math.round(p * (sorted.size() - 1)), 0, sorted.size() - 1);
+        return sorted.get(idx);
+    }
+
+    /** Nombre de baselines distinctes (à {@link #SAME_LINE_TOLERANCE_PT} près). */
+    private int distinctBaselineCount(List<Fragment> fragments) {
+        List<Float> ys = new ArrayList<>(fragments.size());
+        for (Fragment f : fragments) ys.add(f.y());
+        Collections.sort(ys);
+        int count = 0;
+        float last = Float.NEGATIVE_INFINITY;
+        for (float y : ys) {
+            if (y - last > SAME_LINE_TOLERANCE_PT) { count++; last = y; }
+        }
+        return count;
     }
 
     // =========================================================================
