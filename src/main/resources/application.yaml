@@ -47,6 +47,9 @@ parserag:
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini
 
+  extraction:
+    strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)
+
   vision:
     enabled: true
     confidence-threshold: 0.55
