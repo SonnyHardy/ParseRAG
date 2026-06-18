@@ -69,6 +69,19 @@ parserag:
     overlap: 100
     min-chunk-size: 30     # seuil filtre anti-artefacts
 
+  # Nettoyage header/footer en couches (cf. package service.headerfooter)
+  header-footer-cleaning:
+    enabled: true
+
+    block-vertical-gap-pt: 1       # tolérance Y (pt) pour considérer 2 fragments comme "même ligne"
+    header-zone-ratio: 0.15        # un bloc est header SI y0/H < 0.15 (top 15% de la page)
+    footer-zone-ratio: 0.15        # un bloc est footer SI y1/H > 0.85 (bottom 15% de la page)
+    min-recurrent-pages: 3         # couche récurrence : un pattern doit recurrer sur ≥ N pages (cappé à pageCount)
+
+    # ── Couche DBSCAN (secondaire) ───────────────────────────────────
+    dbscan-eps: 0.05               # rayon de voisinage (features page-normalized en [0,1])
+    dbscan-min-samples: 3          # taille min d'un noyau de cluster
+
   page-limits:
     max-pages-free: 100   # plan gratuit → 100 pages max
     max-pages-starter: 300   # plan starter → 300 pages max

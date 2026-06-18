@@ -7,6 +7,7 @@ import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
+import com.sonny.parserag.service.headerfooter.HeaderFooterCleaningService;
 import com.sonny.parserag.service.processing.ChunkingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,7 @@ public class ParsePipelineService {
     private static final long   MAX_FILE_SIZE    = 50L * 1024 * 1024; // 50 MB
 
     private final PdfTextExtractorService pdfTextExtractorService;
+    private final HeaderFooterCleaningService headerFooterCleaningService;
     private final ChunkingService chunkingService;
 
     public ParseResponse process(MultipartFile file, ApiKey apiKey) {
@@ -49,6 +51,7 @@ public class ParsePipelineService {
         validateFile(file, bytes);
 
         ExtractedDocument doc = pdfTextExtractorService.extract(bytes, plan);
+        doc = headerFooterCleaningService.clean(bytes, doc);
         List<Chunk> chunks = chunkingService.chunk(doc);
 
         long processingMs = System.currentTimeMillis() - startTime;
