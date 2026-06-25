@@ -2,18 +2,23 @@ package com.sonny.parserag.service.fallback;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openai.client.OpenAIClient;
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.models.ResponseFormatJsonObject;
+import com.openai.models.chat.completions.ChatCompletion;
+import com.openai.models.chat.completions.ChatCompletionContentPart;
+import com.openai.models.chat.completions.ChatCompletionContentPartImage;
+import com.openai.models.chat.completions.ChatCompletionContentPartText;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.TableResult;
 import lombok.extern.slf4j.Slf4j;
-import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Fallback d'extraction de tableau par vision (OpenAI GPT-4o mini), pour les tableaux <em>sans
@@ -29,8 +34,6 @@ import java.util.Map;
 @Service
 public class VisionFallbackService {
 
-    private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-
     /** Confiance de base d'un tableau reconstruit par vision (calée sous le bordered Tabula). */
     private static final double VISION_CONFIDENCE = 0.6;
 
@@ -41,24 +44,50 @@ public class VisionFallbackService {
     private static final String USER_PROMPT = """
             Extract the table in this image as JSON with exactly this shape:
             {"headers": ["col1", "col2", ...], "rows": [["c1", "c2", ...], ...]}
-            Rules: one array per row, cells as plain strings (empty string if a cell is blank),
-            keep the original reading order, do not invent or merge columns. If the image contains \
-            no table, return {"headers": [], "rows": []}.""";
+            Rules: one array per row, cells as plain strings (empty string if a cell is blank).
+            Every row MUST have exactly the same number of cells as "headers" — pad missing cells \
+            with an empty string and never drop or merge cells. Keep dash/hyphen cells ("-") as \
+            their own cell. Do not collapse a multi-level header into a single column.
+            Keep the original reading order, do not invent columns. If the image contains no table, \
+            return {"headers": [], "rows": []}.""";
 
     private final AppProperties appProperties;
     private final ObjectMapper objectMapper;
-    private final RestClient restClient;
+
+    /**
+     * Client OpenAI officiel. Construit <em>paresseusement</em> au premier appel ({@link #client()}) :
+     * en dev la clé est vide et {@link #isAvailable()} reste faux, donc on ne tente jamais de bâtir un
+     * client sans clé. {@code volatile} + double-check pour la sûreté en concurrence.
+     */
+    private volatile OpenAIClient openAiClient;
 
     @Autowired
     public VisionFallbackService(AppProperties appProperties, ObjectMapper objectMapper) {
-        this(appProperties, objectMapper, RestClient.create());
+        this(appProperties, objectMapper, null);
     }
 
-    /** Constructeur testable (RestClient injectable). */
-    VisionFallbackService(AppProperties appProperties, ObjectMapper objectMapper, RestClient restClient) {
+    /** Constructeur testable (client OpenAI injectable / mockable). */
+    VisionFallbackService(AppProperties appProperties, ObjectMapper objectMapper, OpenAIClient openAiClient) {
         this.appProperties = appProperties;
         this.objectMapper = objectMapper;
-        this.restClient = restClient;
+        this.openAiClient = openAiClient;
+    }
+
+    /** Construit (une fois) puis réutilise le client OpenAI à partir de la clé configurée. */
+    private OpenAIClient client() {
+        OpenAIClient local = openAiClient;
+        if (local == null) {
+            synchronized (this) {
+                local = openAiClient;
+                if (local == null) {
+                    local = OpenAIOkHttpClient.builder()
+                            .apiKey(appProperties.getOpenai().getApiKey())
+                            .build();
+                    openAiClient = local;
+                }
+            }
+        }
+        return local;
     }
 
     /** Vrai si le fallback vision est activé ET une clé OpenAI est disponible. */
@@ -88,38 +117,34 @@ public class VisionFallbackService {
         }
     }
 
-    /** Appel HTTP OpenAI (chat completions, vision). Renvoie le contenu texte du 1ᵉʳ choix. */
+    /**
+     * Appel OpenAI via le SDK officiel (chat completions, vision). On envoie un message system
+     * (consigne) puis un message user multimodal = consigne texte + image PNG (data URI base64).
+     * Renvoie le contenu texte du 1ᵉʳ choix, ou {@code null}.
+     */
     private String callOpenAi(byte[] regionPng) {
         String dataUri = "data:image/png;base64," + Base64.getEncoder().encodeToString(regionPng);
-        Map<String, Object> body = getStringObjectMap(dataUri);
 
-        JsonNode response = restClient.post()
-                .uri(OPENAI_URL)
-                .header("Authorization", "Bearer " + appProperties.getOpenai().getApiKey())
-                .header("Content-Type", "application/json")
-                .body(body)
-                .retrieve()
-                .body(JsonNode.class);
+        ChatCompletionContentPart textPart = ChatCompletionContentPart.ofText(
+                ChatCompletionContentPartText.builder().text(USER_PROMPT).build());
+        ChatCompletionContentPart imagePart = ChatCompletionContentPart.ofImageUrl(
+                ChatCompletionContentPartImage.builder()
+                        .imageUrl(ChatCompletionContentPartImage.ImageUrl.builder().url(dataUri).build())
+                        .build());
 
-        if (response == null) return null;
-        return response.path("choices").path(0).path("message").path("content").asText(null);
-    }
+        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
+                .model(appProperties.getOpenai().getModel())
+                .temperature(0d)
+                .responseFormat(ResponseFormatJsonObject.builder().build())
+                .addSystemMessage(SYSTEM_PROMPT)
+                .addUserMessageOfArrayOfContentParts(List.of(textPart, imagePart))
+                .build();
 
-    private @NonNull Map<String, Object> getStringObjectMap(String dataUri) {
-        String model = appProperties.getOpenai().getModel();
-
-        return Map.of(
-                "model", model,
-                "temperature", 0,
-                "response_format", Map.of("type", "json_object"),
-                "messages", List.of(
-                        Map.of("role", "system", "content", SYSTEM_PROMPT),
-                        Map.of("role", "user", "content", List.of(
-                                Map.of("type", "text", "text", USER_PROMPT),
-                                Map.of("type", "image_url", "image_url", Map.of("url", dataUri))
-                        ))
-                )
-        );
+        ChatCompletion completion = client().chat().completions().create(params);
+        return completion.choices().stream()
+                .findFirst()
+                .flatMap(choice -> choice.message().content())
+                .orElse(null);
     }
 
     /**
@@ -139,6 +164,13 @@ public class VisionFallbackService {
 
             int cols = Math.max(headers.size(), rows.stream().mapToInt(List::size).max().orElse(0));
             if (cols < 2) return null;
+
+            // Rectangularise : le modèle omet/ajoute parfois une cellule (surtout sur les tirets).
+            // On aligne en-tête et lignes sur la largeur max, par complétion (jamais de troncature
+            // → aucune donnée perdue), pour garantir un en-tête et des lignes cohérents.
+            while (headers.size() < cols) headers.add("");
+            for (List<String> r : rows) while (r.size() < cols) r.add("");
+
             int rowCount = rows.size() + (headers.isEmpty() ? 0 : 1);
 
             return new TableResult(page, caption, headers, rows, rowCount, cols, VISION_CONFIDENCE, true);

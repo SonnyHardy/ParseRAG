@@ -25,6 +25,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Extrait les tableaux d'un PDF natif (issue #9) en {@link TableResult} structurés, par
@@ -61,6 +62,15 @@ public class TableExtractorService {
     /** Seuils de « cellule brève » pour le score de qualité sémantique. */
     private static final int MAX_CELL_WORDS = 4;
     private static final int MAX_CELL_CHARS = 28;
+
+    /** Un token/cellule « numérique » contient au moins un chiffre. */
+    private static final Pattern HAS_DIGIT = Pattern.compile(".*\\d.*");
+    /** Caractère de remplacement Unicode (glyphe non décodé) : signe d'extraction défaillante. */
+    private static final char REPLACEMENT_CHAR = '�';
+    /** Remplissage en deçà duquel une colonne est « creuse » → trahit un découpage en colonnes fantômes. */
+    private static final double HOLLOW_COLUMN_FILL = 0.2;
+    /** Ratio de cellules d'en-tête numériques au-delà duquel l'en-tête est jugé « happé » (mauvaise ligne). */
+    private static final double NUMERIC_HEADER_RATIO = 0.6;
 
     private final AppProperties appProperties;
     private final TableRegionDetector tableRegionDetector;
@@ -101,7 +111,9 @@ public class TableExtractorService {
 
                     // Fallback vision sur grille absente/médiocre — bordered comme borderless
                     // (un tableau à filets aux en-têtes éclatés bénéficie aussi de la vision).
-                    boolean poor = tr == null || semanticQuality(tr) < qualityThreshold;
+                    boolean poor = tr == null
+                            || semanticQuality(tr) < qualityThreshold
+                            || hasStructuralDefect(tr);
                     if (poor && visionFallbackService.isAvailable() && visionUsed < visionBudget) {
                         byte[] img = renderRegion(renderer, region);
                         TableResult vision = visionFallbackService.extractTable(img, region.page(), region.caption());
@@ -277,6 +289,61 @@ public class TableExtractorService {
         double brevity = (double) shortCells / nonEmpty;
         double singletonFrac = (double) singletonRows / rows.size();
         return brevity * (1.0 - singletonFrac);
+    }
+
+    /**
+     * Défauts de <em>structure</em> que le score de brièveté ne voit pas, et qui justifient le fallback
+     * vision même sur une grille « pleine » et « brève » :
+     * <ol>
+     *   <li>glyphe non décodé ({@code �}) n'importe où ;</li>
+     *   <li>en-tête majoritairement numérique (≥ 3 colonnes) → la vraie ligne d'en-tête a été ratée
+     *       (ex. tailles {@code 392k…} happées à la place des noms de tâches) ;</li>
+     *   <li>colonne « creuse » hors 1ʳᵉ colonne → colonnes fantômes d'un mauvais découpage Tabula
+     *       (ex. nombres centrés éclatés sur des colonnes vides intercalées).</li>
+     * </ol>
+     */
+    boolean hasStructuralDefect(TableResult t) {
+        List<String> headers = t.headers();
+        List<List<String>> rows = t.rows();
+        int cols = headers.size();
+        if (cols < 2) return false;
+
+        // 1. Glyphe non décodé.
+        if (containsReplacementChar(headers)) return true;
+        for (List<String> r : rows) if (containsReplacementChar(r)) return true;
+
+        // 2. En-tête majoritairement numérique ET 1ʳᵉ cellule vide : signature d'une ligne d'en-tête
+        //    mal alignée (ligne de données/tailles happée comme en-tête). La garde « 1ʳᵉ cellule vide »
+        //    épargne les tables à en-têtes légitimement numériques (années, tailles, # couches) dont
+        //    la colonne de libellés est étiquetée → évite le faux positif.
+        String first = headers.getFirst();
+        boolean firstBlank = first == null || first.isBlank();
+        long headerNonEmpty = headers.stream().filter(s -> s != null && !s.isBlank()).count();
+        long headerNumeric = headers.stream()
+                .filter(s -> s != null && !s.isBlank() && HAS_DIGIT.matcher(s).matches())
+                .count();
+        if (firstBlank && cols >= 3 && headerNonEmpty > 0
+                && (double) headerNumeric / headerNonEmpty >= NUMERIC_HEADER_RATIO) {
+            return true;
+        }
+
+        // 3. Colonne creuse (hors 1ʳᵉ colonne, souvent le libellé de ligne).
+        int total = rows.size() + 1;   // en-tête + données
+        for (int c = 1; c < cols; c++) {
+            int filled = isCellFilled(headers, c) ? 1 : 0;
+            for (List<String> r : rows) if (isCellFilled(r, c)) filled++;
+            if ((double) filled / total <= HOLLOW_COLUMN_FILL) return true;
+        }
+        return false;
+    }
+
+    private boolean containsReplacementChar(List<String> cells) {
+        for (String c : cells) if (c != null && c.indexOf(REPLACEMENT_CHAR) >= 0) return true;
+        return false;
+    }
+
+    private boolean isCellFilled(List<String> row, int c) {
+        return c < row.size() && row.get(c) != null && !row.get(c).isBlank();
     }
 
     /** Base selon la méthode, modulée par le taux de remplissage (même esprit que le score de chunk). */

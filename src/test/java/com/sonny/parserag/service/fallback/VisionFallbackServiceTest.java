@@ -62,4 +62,29 @@ class VisionFallbackServiceTest {
         assertFalse(s.isAvailable());
         assertNull(s.extractTable(new byte[]{1, 2, 3}, 1, null), "sans clé : aucun appel, null");
     }
+
+    @Test
+    void rectangularizesShortRowsToHeaderWidth() {
+        // Le modèle omet parfois une cellule : la ligne courte doit être complétée par "".
+        String json = "{\"headers\":[\"A\",\"B\",\"C\"],\"rows\":[[\"1\",\"2\",\"3\"],[\"4\",\"5\"]]}";
+        TableResult t = service.parseVisionContent(json, 1, null);
+
+        assertNotNull(t);
+        assertEquals(3, t.colCount());
+        assertTrue(t.rows().stream().allMatch(r -> r.size() == 3), "toutes les lignes alignées sur 3 colonnes");
+        assertEquals(List.of("4", "5", ""), t.rows().get(1), "ligne courte complétée par \"\"");
+    }
+
+    @Test
+    void padsHeaderWhenRowWiderThanHeaders() {
+        // Inverse : une ligne plus large que l'en-tête → en-tête complété, aucune donnée tronquée.
+        String json = "{\"headers\":[\"A\",\"B\"],\"rows\":[[\"1\",\"2\",\"3\"]]}";
+        TableResult t = service.parseVisionContent(json, 1, null);
+
+        assertNotNull(t);
+        assertEquals(3, t.colCount());
+        assertEquals(3, t.headers().size());
+        assertEquals("", t.headers().get(2), "en-tête complété sans perte de données");
+        assertEquals(List.of("1", "2", "3"), t.rows().get(0));
+    }
 }

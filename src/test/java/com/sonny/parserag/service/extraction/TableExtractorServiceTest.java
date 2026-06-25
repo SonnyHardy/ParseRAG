@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -142,5 +143,63 @@ class TableExtractorServiceTest {
         assertTrue(cleanQ >= 0.9, "table propre attendue ≥ 0.9, obtenu " + cleanQ);
         assertTrue(proseQ < 0.75, "table polluée attendue < seuil 0.75, obtenu " + proseQ);
         assertTrue(cleanQ > proseQ);
+    }
+
+    // ── hasStructuralDefect : signaux complétant semanticQuality pour le routage vision ──
+
+    private static TableResult table(List<String> headers, List<List<String>> rows) {
+        return new TableResult(1, null, headers, rows, rows.size() + 1, headers.size(), 0.6, false);
+    }
+
+    @Test
+    void structuralDefect_hollowColumn() {
+        // Colonne B remplie seulement à l'en-tête (1/5 = 0.2) → colonne fantôme d'un mauvais découpage.
+        TableResult t = table(
+                List.of("A", "B", "C", "D"),
+                List.of(List.of("a1", "", "c1", "d1"),
+                        List.of("a2", "", "c2", "d2"),
+                        List.of("a3", "", "c3", "d3"),
+                        List.of("a4", "", "c4", "d4")));
+        assertTrue(service.hasStructuralDefect(t), "colonne creuse → défaut");
+    }
+
+    @Test
+    void structuralDefect_numericHeaderWithBlankFirstCell() {
+        // En-tête happé (tailles à la place des noms de colonnes) + 1ʳᵉ cellule vide.
+        TableResult t = table(
+                List.of("", "392k", "363k", "108k"),
+                List.of(List.of("Pre-OpenAI", "80.6", "66.1", "82.3"),
+                        List.of("BERTBASE", "84.6", "71.2", "90.5")));
+        assertTrue(service.hasStructuralDefect(t), "en-tête numérique + 1ʳᵉ cellule vide → défaut");
+    }
+
+    @Test
+    void structuralDefect_numericHeaderButLabeledFirstCell_isNotDefect() {
+        // En-têtes légitimement numériques (années) mais 1ʳᵉ colonne étiquetée → le durcissement
+        // « 1ʳᵉ cellule vide » empêche le faux positif.
+        TableResult t = table(
+                List.of("Year", "2018", "2019", "2020"),
+                List.of(List.of("Sales", "100", "110", "120"),
+                        List.of("Cost", "60", "65", "70")));
+        assertFalse(service.hasStructuralDefect(t),
+                "1ʳᵉ cellule étiquetée → numeric_header ne doit pas déclencher");
+    }
+
+    @Test
+    void structuralDefect_replacementChar() {
+        TableResult t = table(
+                List.of("A", "B"),
+                List.of(List.of("112�112", "ok"),
+                        List.of("x", "y")));
+        assertTrue(service.hasStructuralDefect(t), "glyphe non décodé → défaut");
+    }
+
+    @Test
+    void structuralDefect_cleanTable_isNotDefect() {
+        TableResult t = table(
+                List.of("Produit", "Q1", "Q2"),
+                List.of(List.of("Widget A", "120", "145"),
+                        List.of("Widget B", "80", "92")));
+        assertFalse(service.hasStructuralDefect(t), "table propre → aucun défaut");
     }
 }

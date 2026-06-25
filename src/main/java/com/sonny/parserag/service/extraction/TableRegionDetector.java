@@ -209,6 +209,9 @@ public class TableRegionDetector {
             float allowedGap = k == 1 ? Math.max(maxGap, FIRST_HOP_MIN_GAP_PT) : maxGap;
             if (Math.abs(cur.y() - prev.y()) > allowedGap) break;
             if (cur.prose()) break;
+            // Une nouvelle légende « Table N: » marque le début d'un autre tableau : on s'arrête
+            // avant de l'absorber (évite la fusion de deux tableaux booktabs consécutifs).
+            if (CAPTION_ANCHOR.matcher(cur.text()).matches()) break;
             run.add(cur);
             prev = cur;
         }
