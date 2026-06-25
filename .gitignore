@@ -35,4 +35,4 @@ build/
 
 .env
 
-sample-pdfs/
+/src/test/resources/sample-pdfs/results/

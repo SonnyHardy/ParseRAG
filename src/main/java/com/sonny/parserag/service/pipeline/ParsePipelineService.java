@@ -4,9 +4,15 @@ import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.exception.ParseRagException;
 import com.sonny.parserag.model.domain.Chunk;
+import com.sonny.parserag.model.domain.ChunkType;
 import com.sonny.parserag.model.domain.ExtractedDocument;
+import com.sonny.parserag.model.domain.TableRegion;
+import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
+import com.sonny.parserag.service.extraction.TableExtractorService;
+import com.sonny.parserag.service.extraction.TableRegionDetector;
+import com.sonny.parserag.service.extraction.TableTextStripper;
 import com.sonny.parserag.service.headerfooter.HeaderFooterCleaningService;
 import com.sonny.parserag.service.processing.ChunkingService;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +23,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Orchestrateur central du pipeline de parsing ParseRAG.
@@ -39,6 +49,9 @@ public class ParsePipelineService {
     private final PdfTextExtractorService pdfTextExtractorService;
     private final HeaderFooterCleaningService headerFooterCleaningService;
     private final ChunkingService chunkingService;
+    private final TableRegionDetector tableRegionDetector;
+    private final TableExtractorService tableExtractorService;
+    private final TableTextStripper tableTextStripper;
 
     public ParseResponse process(MultipartFile file, ApiKey apiKey) {
         Plan plan = apiKey != null ? apiKey.getPlan() : Plan.FREE;
@@ -52,13 +65,63 @@ public class ParsePipelineService {
 
         ExtractedDocument doc = pdfTextExtractorService.extract(bytes, plan);
         doc = headerFooterCleaningService.clean(bytes, doc);
-        List<Chunk> chunks = chunkingService.chunk(doc);
+
+        // Détection des régions partagée : extraction structurée + excision du texte (anti-doublon).
+        List<TableRegion> tableRegions = tableRegionDetector.detect(bytes);
+        List<TableResult> tables = tableExtractorService.extract(bytes, doc, tableRegions);
+        doc = tableTextStripper.strip(bytes, doc, tableRegions);
+
+        List<Chunk> textChunks = chunkingService.chunk(doc);
+        List<Chunk> chunks = assembleChunks(doc.documentId(), textChunks, tables);
 
         long processingMs = System.currentTimeMillis() - startTime;
         log.info("Pipeline done — docId: {}, pages: {}, lang: {}, time: {}ms",
                 doc.documentId(), doc.pageCount(), doc.detectedLanguage(), processingMs);
 
         return ParseResponse.ok(doc.documentId(), doc.pageCount(), doc.detectedLanguage(), processingMs, chunks);
+    }
+
+    /**
+     * Fusionne les chunks de texte et les tableaux en une seule liste ordonnée par page
+     * (tri stable : le texte d'une page précède ses tableaux), puis ré-attribue des IDs
+     * séquentiels. Si aucun tableau, la liste texte est renvoyée telle quelle.
+     */
+    private List<Chunk> assembleChunks(String docId, List<Chunk> textChunks, List<TableResult> tables) {
+        if (tables.isEmpty()) return textChunks;
+
+        List<Chunk> merged = new ArrayList<>(textChunks.size() + tables.size());
+        merged.addAll(textChunks);
+        for (TableResult t : tables) merged.add(toTableChunk(t));
+        merged.sort(Comparator.comparingInt(Chunk::page));
+
+        List<Chunk> out = new ArrayList<>(merged.size());
+        int i = 0;
+        for (Chunk c : merged) {
+            String id = "chunk_%s_%03d".formatted(docId, i++);
+            out.add(new Chunk(id, c.text(), c.type(), c.page(), c.charStart(), c.charEnd(),
+                    c.confidence(), c.fallbackUsed(), c.tableJson()));
+        }
+        return out;
+    }
+
+    /** Mappe un tableau en chunk TABLE : table_json structuré + texte linéarisé (embeddable RAG). */
+    private Chunk toTableChunk(TableResult t) {
+        Map<String, Object> tableJson = new LinkedHashMap<>();
+        if (t.caption() != null && !t.caption().isBlank()) tableJson.put("caption", t.caption());
+        tableJson.put("headers", t.headers());
+        tableJson.put("rows", t.rows());
+
+        // id provisoire (null) — ré-attribué dans assembleChunks.
+        return new Chunk(null, linearizeTable(t), ChunkType.TABLE, t.page(), 0, 0,
+                t.confidence(), t.fallbackUsed(), tableJson);
+    }
+
+    private String linearizeTable(TableResult t) {
+        StringBuilder sb = new StringBuilder();
+        if (t.caption() != null && !t.caption().isBlank()) sb.append(t.caption()).append('\n');
+        sb.append(String.join(" | ", t.headers()));
+        for (List<String> row : t.rows()) sb.append('\n').append(String.join(" | ", row));
+        return sb.toString();
     }
 
     private byte[] readBytes(MultipartFile file) {

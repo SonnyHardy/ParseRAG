@@ -21,6 +21,7 @@ public class AppProperties {
 
     private final OpenAI               openai               = new OpenAI();
     private final Extraction           extraction           = new Extraction();
+    private final Tables               tables               = new Tables();
     private final Vision               vision               = new Vision();
     private final RateLimit            rateLimit            = new RateLimit();
     private final Quota                quota                = new Quota();
@@ -41,10 +42,25 @@ public class AppProperties {
     }
 
     @Data
+    public static class Tables {
+        private boolean enabled;
+        /** Active le fallback Tabula sans bordures (BasicExtractionAlgorithm) sur pages tabulaires. */
+        private boolean borderlessFallback;
+        /** Filtrage anti-faux-positifs : seuils minimaux d'un vrai tableau. */
+        @Positive private int    minRows;
+        @Positive private int    minCols;
+        @Min(0) @Max(1)
+        private double minFillRatio;   // ratio minimal de cellules non-vides
+    }
+
+    @Data
     public static class Vision {
         private boolean enabled;
         @Min(0) @Max(1)
         private double  confidenceThreshold;
+        /** Sous ce score de qualité sémantique d'une grille Tabula borderless, on bascule sur la vision. */
+        @Min(0) @Max(1)
+        private double  qualityThreshold;
         @Positive
         private int     maxPagesPerDocument;
     }

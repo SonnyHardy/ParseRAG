@@ -13,13 +13,10 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import org.apache.pdfbox.text.PDFTextStripper;
-import org.apache.pdfbox.text.TextPosition;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -36,21 +33,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class PdfTextExtractorService {
 
-    /** Résolution de l'histogramme X en points PDF (1 = max, 1 bin = 1pt). */
-    private static final int HISTOGRAM_RES_PT = 1;
-
-    /**
-     * Largeur minimale (pt) d'un vide horizontal pour le considérer comme une gouttière.
-     * Gouttière typique ACM/IEEE : ~12pt — 8pt offre une marge de sécurité.
-     * TODO: au cas où il serait nécessaire d'ajuster ultérieurement.
-     */
-    private static final float MIN_GUTTER_WIDTH_PT = 8f;
-
-    /** Zone X (ratio de la largeur de page) où chercher les gouttières. Exclut marges + numéros de ligne. */
-    private static final float X_SEARCH_START_RATIO = 0.15f;
-    private static final float X_SEARCH_END_RATIO   = 0.85f;
-
-    /** Zone Y (ratio de la hauteur) prise en compte pour l'histogramme. Exclut headers/footers. */
+    /** Zone Y (ratio de la hauteur) prise en compte pour le retrait des numéros de ligne. */
     private static final float Y_FILTER_TOP_RATIO    = 0.15f;
     private static final float Y_FILTER_BOTTOM_RATIO = 0.85f;
 
@@ -81,6 +64,7 @@ public class PdfTextExtractorService {
     private static final float   LINE_NUMBER_MONOTONIC_MIN = 0.70f;
 
     private final AppProperties appProperties;
+    private final PageGeometryAnalyzer pageGeometryAnalyzer;
 
     // =========================================================================
     // Public API
@@ -140,16 +124,14 @@ public class PdfTextExtractorService {
         int pageCount = document.getNumberOfPages();
         List<ExtractedPage> pages = new ArrayList<>(pageCount);
 
-        FragmentCapturingStripper stripper = new FragmentCapturingStripper();
-
         for (int pageNum = 1; pageNum <= pageCount; pageNum++) {
             long pageStart = System.currentTimeMillis();
             PDPage pdPage  = document.getPage(pageNum - 1);
 
-            String rawText = extractPageText(document, pdPage, pageNum, stripper);
+            String rawText = extractPageText(document, pdPage, pageNum);
 
             boolean hasImages      = pageHasImages(pdPage);
-            boolean likelyHasTable = looksLikeTable(rawText);
+            boolean likelyHasTable = pageLooksTabular(rawText);
 
             log.debug("Page {}/{} extracted in {}ms ({} chars). Images: {}, Table: {}",
                     pageNum, pageCount, System.currentTimeMillis() - pageStart,
@@ -180,10 +162,9 @@ public class PdfTextExtractorService {
      * <p><strong>Coût :</strong> 1 parse PDFBox / page, indépendamment du nombre
      * de colonnes. Le reste est en mémoire (O(n log n) pour le tri par colonne).
      */
-    private String extractPageText(PDDocument doc, PDPage page, int pageNum,
-                                   FragmentCapturingStripper stripper) throws IOException {
+    private String extractPageText(PDDocument doc, PDPage page, int pageNum) throws IOException {
 
-        List<Fragment> fragments = stripper.parsePage(doc, pageNum);
+        List<Fragment> fragments = pageGeometryAnalyzer.fragments(doc, pageNum);
         if (fragments.isEmpty()) return "";
 
         float pageWidth  = page.getMediaBox().getWidth();
@@ -195,7 +176,7 @@ public class PdfTextExtractorService {
             if (fragments.isEmpty()) return "";
         }
 
-        float[] splits = detectColumnSplits(fragments, pageWidth, pageHeight);
+        float[] splits = pageGeometryAnalyzer.columnSplits(fragments, pageWidth, pageHeight);
 
         if (splits.length == 0) {
             return assembleAsSingleColumn(fragments);
@@ -213,64 +194,6 @@ public class PdfTextExtractorService {
         log.debug("Page {} — {} columns detected, splits at {}",
                 pageNum, splits.length + 1, Arrays.toString(splits));
         return multiColumnText;
-    }
-
-    // =========================================================================
-    // Column detection — histogram-based, supports N columns
-    // =========================================================================
-
-    /**
-     * Détecte les coordonnées X qui séparent les colonnes en cherchant les vides
-     * suffisamment larges dans un histogramme haute résolution des positions X.
-     *
-     * <p>Tous les vides ≥ {@link #MIN_GUTTER_WIDTH_PT} dans la zone de recherche
-     * sont retenus. Aucun cas spécial pour 2 colonnes — l'algorithme gère
-     * naturellement 1, 2, 3, N colonnes.
-     *
-     * @return tableau (potentiellement vide) des splits X, en ordre croissant.
-     *         {@code splits.length + 1} = nombre de colonnes détectées.
-     */
-    private float[] detectColumnSplits(List<Fragment> fragments, float pageWidth, float pageHeight) {
-        float yMin = pageHeight * Y_FILTER_TOP_RATIO;
-        float yMax = pageHeight * Y_FILTER_BOTTOM_RATIO;
-
-        int bins = (int) Math.ceil(pageWidth / HISTOGRAM_RES_PT);
-        int[] hist = new int[bins];
-
-        for (Fragment f : fragments) {
-            // Filtre Y : exclut headers/footers qui combleraient artificiellement les gouttières
-            if (f.y() < yMin || f.y() > yMax) continue;
-            int b0 = Math.max(0, (int) (f.xStart() / HISTOGRAM_RES_PT));
-            int b1 = Math.min(bins - 1, (int) (f.xEnd() / HISTOGRAM_RES_PT));
-            for (int b = b0; b <= b1; b++) hist[b]++;
-        }
-
-        int searchStart  = (int) (bins * X_SEARCH_START_RATIO);
-        int searchEnd    = Math.min(bins, (int) (bins * X_SEARCH_END_RATIO));
-        int minGutterBin = (int) Math.ceil(MIN_GUTTER_WIDTH_PT / HISTOGRAM_RES_PT);
-
-        List<Float> splits = new ArrayList<>();
-        int gapStart = -1;
-
-        for (int i = searchStart; i < searchEnd; i++) {
-            boolean empty = hist[i] == 0;
-            if (empty) {
-                if (gapStart == -1) gapStart = i;
-            } else if (gapStart != -1) {
-                if (i - gapStart >= minGutterBin) {
-                    splits.add(((gapStart + i) / 2f) * HISTOGRAM_RES_PT);
-                }
-                gapStart = -1;
-            }
-        }
-        // Vide qui se prolonge jusqu'à la fin de la zone de recherche
-        if (gapStart != -1 && (searchEnd - gapStart) >= minGutterBin) {
-            splits.add(((gapStart + searchEnd) / 2f) * HISTOGRAM_RES_PT);
-        }
-
-        float[] result = new float[splits.size()];
-        for (int i = 0; i < splits.size(); i++) result[i] = splits.get(i);
-        return result;
     }
 
     // =========================================================================
@@ -477,53 +400,6 @@ public class PdfTextExtractorService {
     }
 
     // =========================================================================
-    // Internal stripper — captures fragments in a single page parse
-    // =========================================================================
-
-    /** Run de texte capturé : contenu + plage X + Y baseline. */
-    private record Fragment(String text, float xStart, float xEnd, float y) {}
-
-    /**
-     * {@link PDFTextStripper} qui capture chaque text run sous forme de
-     * {@link Fragment} sans rien écrire sur la sortie standard. Permet une
-     * unique passe PDFBox par page ; le réassemblage se fait ensuite
-     * intégralement en mémoire à partir des positions capturées.
-     */
-    private static final class FragmentCapturingStripper extends PDFTextStripper {
-
-        private final List<Fragment> buffer = new ArrayList<>(2048);
-
-        FragmentCapturingStripper() {
-            super();
-            setSortByPosition(true);
-        }
-
-        @Override
-        protected void writeString(String text, List<TextPosition> positions) {
-            if (text == null || text.isEmpty() || positions == null || positions.isEmpty()) {
-                return;
-            }
-            TextPosition first = positions.getFirst();
-            TextPosition last  = positions.getLast();
-
-            float xStart = first.getXDirAdj();
-            float xEnd   = last.getXDirAdj() + last.getWidthDirAdj();
-            float y      = first.getYDirAdj();
-
-            buffer.add(new Fragment(text, xStart, xEnd, y));
-        }
-
-        List<Fragment> parsePage(PDDocument doc, int pageNum) throws IOException {
-            buffer.clear();
-            setStartPage(pageNum);
-            setEndPage(pageNum);
-            // Le Writer est ignoré : writeString est overridé pour ne pas y écrire.
-            super.writeText(doc, new StringWriter());
-            return new ArrayList<>(buffer);
-        }
-    }
-
-    // =========================================================================
     // Helpers (inchangés sur le fond)
     // =========================================================================
 
@@ -543,7 +419,20 @@ public class PdfTextExtractorService {
         return false;
     }
 
-    // Les tableaux seront traités plus tard lors de l'issue #9.
+    /**
+     * Heuristique conservatrice pour le flag {@link ExtractedPage#likelyHasTable()} : une page
+     * « tabulaire » a plusieurs lignes présentant au moins deux écarts larges (colonnes alignées
+     * par espaces) ou des tabulations. Sert uniquement à gater le fallback Tabula sans bordures.
+     */
+    private boolean pageLooksTabular(String text) {
+        if (text == null || text.isBlank()) return false;
+        long tabularLines = text.lines()
+                .filter(l -> l.contains("\t") || l.matches(".*\\S\\s{3,}\\S.*\\s{3,}\\S.*"))
+                .count();
+        return tabularLines >= 3;
+    }
+
+    // Conservé pour le fallback mono-colonne de l'assembleur (désactivé pour l'instant).
     private boolean looksLikeTable(String text) {
         return false;
         /*if (text == null || text.isBlank()) return false;

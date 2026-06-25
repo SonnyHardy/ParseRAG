@@ -50,9 +50,17 @@ parserag:
   extraction:
     strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)
 
-  vision:
+  tables:
     enabled: true
+    borderless-fallback: false # OFF : la détection sans bordures transforme prose/figures en faux tableaux (précision d'abord). Voir TODO tableaux sans bordures.
+    min-rows: 2                # filtrage anti-faux-positifs (Tabula sur-détecte)
+    min-cols: 2
+    min-fill-ratio: 0.4        # ≥ 40% de cellules non-vides (régions déjà filtrées en amont par le détecteur ; tolère les tableaux à cellules fusionnées)
+
+  vision:
+    enabled: false
     confidence-threshold: 0.55
+    quality-threshold: 0.75      # qualité sémantique min d'une grille Tabula borderless ; en dessous → fallback vision
     max-pages-per-document: 20
 
   rate-limit:
