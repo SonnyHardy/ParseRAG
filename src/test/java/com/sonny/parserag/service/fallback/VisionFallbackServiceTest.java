@@ -3,6 +3,7 @@ package com.sonny.parserag.service.fallback;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.TableResult;
+import com.sonny.parserag.model.domain.VisionPageResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -86,5 +87,67 @@ class VisionFallbackServiceTest {
         assertEquals(3, t.headers().size());
         assertEquals("", t.headers().get(2), "en-tête complété sans perte de données");
         assertEquals(List.of("1", "2", "3"), t.rows().get(0));
+    }
+
+    // ── Fallback plein-page (issue #11) : parsePageContent ──
+
+    @Test
+    void parsesPageWithTextAndTables() {
+        String json = "{\"text\":\"Para un.\\nPara deux.\",\"tables\":["
+                + "{\"headers\":[\"A\",\"B\"],\"rows\":[[\"1\",\"2\"]]}]}";
+        VisionPageResult r = service.parsePageContent(json, 7);
+
+        assertNotNull(r);
+        assertEquals(7, r.page());
+        assertEquals("Para un.\nPara deux.", r.text());
+        assertEquals(1, r.tables().size());
+        TableResult t = r.tables().getFirst();
+        assertEquals(7, t.page(), "le tableau porte la page de la réponse");
+        assertEquals(List.of("A", "B"), t.headers());
+        assertTrue(t.fallbackUsed());
+    }
+
+    @Test
+    void parsesPageWithTextOnly() {
+        VisionPageResult r = service.parsePageContent("{\"text\":\"Body only.\",\"tables\":[]}", 1);
+        assertNotNull(r);
+        assertEquals("Body only.", r.text());
+        assertTrue(r.tables().isEmpty());
+    }
+
+    @Test
+    void parsesPageWithTablesOnly() {
+        String json = "{\"text\":\"\",\"tables\":[{\"headers\":[\"X\",\"Y\"],\"rows\":[[\"a\",\"b\"]]}]}";
+        VisionPageResult r = service.parsePageContent(json, 1);
+        assertNotNull(r);
+        assertEquals("", r.text());
+        assertEquals(1, r.tables().size());
+    }
+
+    @Test
+    void pageRectangularizesAndSkipsInvalidTables() {
+        // 1ʳᵉ table valide mais ragged (à compléter) ; 2ᵉ table dégénérée (1 colonne) → ignorée.
+        String json = "{\"text\":\"t\",\"tables\":["
+                + "{\"headers\":[\"A\",\"B\",\"C\"],\"rows\":[[\"1\"]]},"
+                + "{\"headers\":[\"solo\"],\"rows\":[[\"x\"]]}]}";
+        VisionPageResult r = service.parsePageContent(json, 1);
+        assertNotNull(r);
+        assertEquals(1, r.tables().size(), "la table à 1 colonne est écartée");
+        assertEquals(List.of("1", "", ""), r.tables().getFirst().rows().getFirst(), "ligne complétée");
+    }
+
+    @Test
+    void returnsNullOnEmptyOrUnusablePage() {
+        assertNull(service.parsePageContent("{\"text\":\"\",\"tables\":[]}", 1), "ni texte ni table");
+        assertNull(service.parsePageContent("", 1));
+        assertNull(service.parsePageContent("not json", 1));
+    }
+
+    @Test
+    void extractPageUnavailableWithoutApiKey() {
+        AppProperties props = new AppProperties();
+        props.getVision().setEnabled(true);   // activé mais clé vide
+        VisionFallbackService s = new VisionFallbackService(props, new ObjectMapper());
+        assertNull(s.extractPage(new byte[]{1, 2, 3}, 1), "sans clé : aucun appel, null");
     }
 }
