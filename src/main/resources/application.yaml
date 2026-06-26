@@ -46,6 +46,7 @@ parserag:
   openai:
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini
+    max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
 
   extraction:
     strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)

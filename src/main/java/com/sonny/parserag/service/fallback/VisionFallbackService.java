@@ -103,6 +103,7 @@ public class VisionFallbackService {
                 if (local == null) {
                     local = OpenAIOkHttpClient.builder()
                             .apiKey(appProperties.getOpenai().getApiKey())
+                            .maxRetries(appProperties.getOpenai().getMaxRetries())
                             .build();
                     openAiClient = local;
                 }
