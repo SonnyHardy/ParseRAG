@@ -46,6 +46,7 @@ parserag:
   openai:
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini
+    max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
 
   extraction:
     strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)
@@ -58,7 +59,7 @@ parserag:
     min-fill-ratio: 0.4        # ≥ 40% de cellules non-vides (régions déjà filtrées en amont par le détecteur ; tolère les tableaux à cellules fusionnées)
 
   vision:
-    enabled: false
+    enabled: true
     confidence-threshold: 0.55
     quality-threshold: 0.75      # qualité sémantique min d'une grille Tabula borderless ; en dessous → fallback vision
     max-pages-per-document: 20

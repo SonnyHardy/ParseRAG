@@ -9,10 +9,15 @@ import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableRegion;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.response.ParseResponse;
+import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
+import com.sonny.parserag.service.extraction.ScannedPageDetector;
 import com.sonny.parserag.service.extraction.TableExtractorService;
 import com.sonny.parserag.service.extraction.TableRegionDetector;
 import com.sonny.parserag.service.extraction.TableTextStripper;
+import com.sonny.parserag.service.fallback.ScannedDocumentFallbackService;
+import com.sonny.parserag.service.fallback.ScannedDocumentFallbackService.ScannedExtraction;
+import com.sonny.parserag.service.fallback.VisionBudget;
 import com.sonny.parserag.service.headerfooter.HeaderFooterCleaningService;
 import com.sonny.parserag.service.processing.ChunkingService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +33,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Orchestrateur central du pipeline de parsing ParseRAG.
@@ -46,12 +52,15 @@ public class ParsePipelineService {
     private static final String PDF_MAGIC_BYTES  = "%PDF";
     private static final long   MAX_FILE_SIZE    = 50L * 1024 * 1024; // 50 MB
 
+    private final AppProperties appProperties;
     private final PdfTextExtractorService pdfTextExtractorService;
     private final HeaderFooterCleaningService headerFooterCleaningService;
     private final ChunkingService chunkingService;
     private final TableRegionDetector tableRegionDetector;
     private final TableExtractorService tableExtractorService;
     private final TableTextStripper tableTextStripper;
+    private final ScannedPageDetector scannedPageDetector;
+    private final ScannedDocumentFallbackService scannedDocumentFallbackService;
 
     public ParseResponse process(MultipartFile file, ApiKey apiKey) {
         Plan plan = apiKey != null ? apiKey.getPlan() : Plan.FREE;
@@ -66,12 +75,30 @@ public class ParsePipelineService {
         ExtractedDocument doc = pdfTextExtractorService.extract(bytes, plan);
         doc = headerFooterCleaningService.clean(bytes, doc);
 
+        // Pages scannées / image-only : routées vers le fallback vision plein-page (issue #11).
+        Set<Integer> scannedPages = scannedPageDetector.scannedPages(doc);
+        // Budget vision partagé pour tout le document (tableaux + pages scannées) : un seul cap.
+        VisionBudget visionBudget = new VisionBudget(appProperties.getVision().getMaxPagesPerDocument());
+
         // Détection des régions partagée : extraction structurée + excision du texte (anti-doublon).
         List<TableRegion> tableRegions = tableRegionDetector.detect(bytes);
-        List<TableResult> tables = tableExtractorService.extract(bytes, doc, tableRegions);
+        List<TableResult> tables = new ArrayList<>(
+                tableExtractorService.extract(bytes, doc, tableRegions, visionBudget));
         doc = tableTextStripper.strip(bytes, doc, tableRegions);
 
         List<Chunk> textChunks = chunkingService.chunk(doc);
+
+        if (!scannedPages.isEmpty()) {
+            // Écarter les éventuels chunks natifs des pages scannées (défensif), puis ajouter le fallback.
+            textChunks = new ArrayList<>(textChunks.stream()
+                    .filter(c -> !scannedPages.contains(c.page()))
+                    .toList());
+            ScannedExtraction scanned =
+                    scannedDocumentFallbackService.process(bytes, doc, scannedPages, visionBudget);
+            textChunks.addAll(scanned.textChunks());
+            tables.addAll(scanned.tables());
+        }
+
         List<Chunk> chunks = assembleChunks(doc.documentId(), textChunks, tables);
 
         long processingMs = System.currentTimeMillis() - startTime;
@@ -84,11 +111,10 @@ public class ParsePipelineService {
     /**
      * Fusionne les chunks de texte et les tableaux en une seule liste ordonnée par page
      * (tri stable : le texte d'une page précède ses tableaux), puis ré-attribue des IDs
-     * séquentiels. Si aucun tableau, la liste texte est renvoyée telle quelle.
+     * séquentiels. Le ré-adressage couvre aussi les chunks à id provisoire {@code null} issus du
+     * fallback vision plein-page.
      */
     private List<Chunk> assembleChunks(String docId, List<Chunk> textChunks, List<TableResult> tables) {
-        if (tables.isEmpty()) return textChunks;
-
         List<Chunk> merged = new ArrayList<>(textChunks.size() + tables.size());
         merged.addAll(textChunks);
         for (TableResult t : tables) merged.add(toTableChunk(t));
@@ -99,7 +125,7 @@ public class ParsePipelineService {
         for (Chunk c : merged) {
             String id = "chunk_%s_%03d".formatted(docId, i++);
             out.add(new Chunk(id, c.text(), c.type(), c.page(), c.charStart(), c.charEnd(),
-                    c.confidence(), c.fallbackUsed(), c.tableJson()));
+                    c.confidence(), c.fallbackUsed(), c.manualReviewNeeded(), c.tableJson()));
         }
         return out;
     }
@@ -113,7 +139,7 @@ public class ParsePipelineService {
 
         // id provisoire (null) — ré-attribué dans assembleChunks.
         return new Chunk(null, linearizeTable(t), ChunkType.TABLE, t.page(), 0, 0,
-                t.confidence(), t.fallbackUsed(), tableJson);
+                t.confidence(), t.fallbackUsed(), false, tableJson);
     }
 
     private String linearizeTable(TableResult t) {

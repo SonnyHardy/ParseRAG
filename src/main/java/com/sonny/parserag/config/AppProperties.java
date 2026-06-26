@@ -33,6 +33,9 @@ public class AppProperties {
     public static class OpenAI {
         private String apiKey;     // OPENAI_API_KEY
         private String model;
+        /** Tentatives du SDK sur 429 (rate-limit) / 5xx, avec backoff exponentiel. */
+        @Min(0)
+        private int maxRetries = 4;
     }
 
     @Data

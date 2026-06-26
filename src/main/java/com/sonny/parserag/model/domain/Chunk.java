@@ -29,11 +29,14 @@ public record Chunk(
         @JsonProperty("fallback_used")
         boolean fallbackUsed,
 
+        @JsonProperty("manual_review_needed")
+        boolean manualReviewNeeded,
+
         @JsonProperty("table_json")
         Object tableJson
 ) {
 
-    /** Factory pour un chunk texte standard (sans données de tableau). */
+    /** Factory pour un chunk texte standard (sans données de tableau, sans revue manuelle). */
     public static Chunk of(
             String id,
             String text,
@@ -43,6 +46,6 @@ public record Chunk(
             int charEnd,
             double confidence
     ) {
-        return new Chunk(id, text, type, page, charStart, charEnd, confidence, false, null);
+        return new Chunk(id, text, type, page, charStart, charEnd, confidence, false, false, null);
     }
 }

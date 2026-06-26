@@ -4,6 +4,7 @@ import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableRegion;
 import com.sonny.parserag.model.domain.TableResult;
+import com.sonny.parserag.service.fallback.VisionBudget;
 import com.sonny.parserag.service.fallback.VisionFallbackService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -84,17 +85,25 @@ public class TableExtractorService {
 
     /**
      * Extrait à partir de régions <em>déjà détectées</em> (le pipeline les partage avec
-     * {@link TableTextStripper}, évitant une seconde détection).
+     * {@link TableTextStripper}, évitant une seconde détection). Budget vision propre au tableau.
      */
     public List<TableResult> extract(byte[] pdfBytes, ExtractedDocument doc, List<TableRegion> regions) {
+        return extract(pdfBytes, doc, regions,
+                new VisionBudget(appProperties.getVision().getMaxPagesPerDocument()));
+    }
+
+    /**
+     * Variante partageant un {@link VisionBudget} avec les autres consommateurs vision du document
+     * (pages scannées) — un seul cap gouverne l'ensemble.
+     */
+    public List<TableResult> extract(byte[] pdfBytes, ExtractedDocument doc, List<TableRegion> regions,
+                                     VisionBudget budget) {
         AppProperties.Tables cfg = appProperties.getTables();
         if (!cfg.isEnabled() || doc == null || regions == null || regions.isEmpty()) {
             return List.of();
         }
 
-        AppProperties.Vision vcfg = appProperties.getVision();
-        double qualityThreshold = vcfg.getQualityThreshold();
-        int visionBudget = vcfg.getMaxPagesPerDocument();
+        double qualityThreshold = appProperties.getVision().getQualityThreshold();
         int visionUsed = 0;
 
         List<TableResult> results = new ArrayList<>();
@@ -114,11 +123,12 @@ public class TableExtractorService {
                     boolean poor = tr == null
                             || semanticQuality(tr) < qualityThreshold
                             || hasStructuralDefect(tr);
-                    if (poor && visionFallbackService.isAvailable() && visionUsed < visionBudget) {
+                    if (poor && visionFallbackService.isAvailable() && budget.hasRemaining()) {
                         byte[] img = renderRegion(renderer, region);
                         TableResult vision = visionFallbackService.extractTable(img, region.page(), region.caption());
                         if (vision != null) {
                             tr = vision;
+                            budget.tryConsume();
                             visionUsed++;
                         }
                     }
