@@ -81,6 +81,11 @@ parserag:
     overlap: 100
     min-chunk-size: 30     # seuil filtre anti-artefacts
 
+  # Score de confiance "reading-order" (issue #30, palier 1)
+  confidence:
+    max-anomaly-rate: 0.2  # taux anomalies/ligne (espaces internes + césures-espace) où la pénalité atteint son plancher
+    penalty-floor: 0.3     # un chunk entrelacé ne tombe jamais à 0 sur ce seul signal
+
   # Nettoyage header/footer en couches (cf. package service.headerfooter)
   header-footer-cleaning:
     enabled: true

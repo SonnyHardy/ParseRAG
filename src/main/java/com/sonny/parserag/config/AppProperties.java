@@ -26,6 +26,7 @@ public class AppProperties {
     private final RateLimit            rateLimit            = new RateLimit();
     private final Quota                quota                = new Quota();
     private final Chunking             chunking             = new Chunking();
+    private final Confidence           confidence           = new Confidence();
     private final PageLimits           pageLimits           = new PageLimits();
     private final HeaderFooterCleaning headerFooterCleaning = new HeaderFooterCleaning();
 
@@ -89,6 +90,21 @@ public class AppProperties {
         @Positive private int maxChunkSize;
         @Positive private int overlap;
         @Positive private int minChunkSize;
+    }
+
+    /**
+     * Score de confiance « reading-order » (issue #30, palier 1). La pénalité d'ordre de
+     * lecture mesure les traces textuelles d'un entrelacement de colonnes (espaces internes
+     * larges, césures suivies d'un espace) et module le score « forme » de façon multiplicative.
+     */
+    @Data
+    public static class Confidence {
+        /** Taux d'anomalies/ligne à partir duquel la pénalité d'ordre de lecture atteint son plancher. */
+        @Positive
+        private double maxAnomalyRate;
+        /** Plancher de la pénalité : un chunk désordonné ne tombe jamais à 0 sur ce seul signal. */
+        @Min(0) @Max(1)
+        private double penaltyFloor;
     }
 
     /** Nettoyage header/footer en couches (cf. package service.headerfooter). */

@@ -63,7 +63,7 @@ class ScannedDocumentFallbackServiceTest {
 
     private static ScannedDocumentFallbackService service(AppProperties p, boolean available) {
         return new ScannedDocumentFallbackService(stubVision(p, available),
-                new ChunkingService(p, new ConfidenceCalculatorService()));
+                new ChunkingService(p, new ConfidenceCalculatorService(p)));
     }
 
     private static ExtractedDocument doc(String id, int pages) {

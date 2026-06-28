@@ -1,18 +1,28 @@
 package com.sonny.parserag.service.processing;
 
+import com.sonny.parserag.config.AppProperties;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests du score de confiance (issue #8). Les attentes sont cohérentes avec la formule
- * {@code 0.4·density + 0.3·length + 0.3·coherence} et orientées « réalisme » : un chunk
- * propre score haut, un fragment/continuation score nettement plus bas.
+ * Tests du reading-order confidence (issues #8 puis #30, palier 1). La formule est
+ * {@code readingOrder · density · (0.5·length + 0.5·coherence)} : un chunk propre score haut,
+ * un fragment/continuation score plus bas, et — nouveauté #30 — un chunk <em>entrelacé</em>
+ * (colonnes recollées dans le désordre) est pénalisé là où la v1 le laissait à 0.9.
  */
 class ConfidenceCalculatorServiceTest {
 
-    private final ConfidenceCalculatorService calc = new ConfidenceCalculatorService();
+    private final ConfidenceCalculatorService calc = build();
+
+    /** POJO sans contexte Spring : on injecte une {@link AppProperties} avec les seuils #30. */
+    private static ConfidenceCalculatorService build() {
+        AppProperties props = new AppProperties();
+        props.getConfidence().setMaxAnomalyRate(0.2);
+        props.getConfidence().setPenaltyFloor(0.3);
+        return new ConfidenceCalculatorService(props);
+    }
 
     private static final String CLEAN_PARAGRAPH =
             ("Zero trust architecture assumes no implicit trust and continuously evaluates "
@@ -86,4 +96,95 @@ class ConfidenceCalculatorServiceTest {
         assertEquals(0.3, calc.coherenceScore("hello world"), 1e-9);  // ratio seul (pas de maj, pas de ponct)
         assertEquals(0.7, calc.coherenceScore("Hello world"), 1e-9);  // majuscule + ratio, sans ponct
     }
+
+    // ── Reading-order (issue #30, palier 1) ────────────────────────────────────
+
+    @Test
+    void cleanProse_keepsFullReadingOrder() {
+        String clean = "This is a perfectly normal paragraph of prose. "
+                + "It has state-of-the-art hyphenated words and ends well.";
+        // Aucune anomalie (pas d'espace interne large, pas de césure-espace) → pas de pénalité.
+        assertEquals(1.0, calc.readingOrderScore(clean), 1e-9);
+    }
+
+    @Test
+    void interleavedText_isClampedToFloor() {
+        String interleaved = "alpha beta gamma for apply- Abstract\n"
+                + "foo bar Rad-      include the\n"
+                + "baz qux task-      they use";
+        // 5 anomalies / 3 lignes → pénalité négative, ramenée au plancher (0.3).
+        assertEquals(0.3, calc.readingOrderScore(interleaved), 1e-9);
+    }
+
+    @Test
+    void pivot_interleavedChunkScoresBelowCleanChunk() {
+        double interleaved = calc.calculate(CHUNK_000_INTERLEAVED);
+        double clean       = calc.calculate(CHUNK_007_CLEAN);
+
+        // Le chunk propre garde son ordre de lecture intact...
+        assertEquals(1.0, calc.readingOrderScore(CHUNK_007_CLEAN), 1e-9);
+        // ...l'entrelacé est nettement pénalisé...
+        assertTrue(calc.readingOrderScore(CHUNK_000_INTERLEAVED) < 0.6,
+                "le chunk entrelacé devrait être pénalisé sur l'ordre de lecture");
+        // ...et au final il passe SOUS le chunk propre (v1 : les deux à 0.9).
+        assertTrue(interleaved < clean,
+                "pivot #30 : entrelacé (" + interleaved + ") doit être < propre (" + clean + ")");
+    }
+
+    /** chunk_000 réel (BERT arxiv-1810.04805) : abstract/intro à deux colonnes recollées dans le désordre. */
+    private static final String CHUNK_000_INTERLEAVED = """
+            BERT: Pre-training of Deep Bidirectional Transformers for
+            Language Understanding
+            Jacob Devlin   Ming-Wei Chang   Kenton Lee   Kristina Toutanova
+            Google AI Language
+            There are two existing strategies for apply- Abstract
+            ing pre-trained language representations to down-
+            We introduce a new language representa-
+            stream tasks: feature-based and fine-tuning. The
+            tion model called BERT, which stands for
+            feature-based approach, such as ELMo (Peters
+            Bidirectional Encoder Representations from
+            et al., 2018a), uses task-specific architectures that
+            Transformers. Unlike recent language repre-
+            sentation models (Peters et al., 2018a; Rad-      include the pre-trained representations as addi-
+            ford et al., 2018), BERT is designed to pre-
+            tional features. The fine-tuning approach, such as
+            train deep bidirectional representations from
+            the Generative Pre-trained Transformer (OpenAI
+            unlabeled text by jointly conditioning on both
+            left and right context in all layers. As a re-
+            sult, the pre-trained BERT model can be fine-
+            same objective function during pre-training, where range of tasks, such as question answering and
+            language inference, without substantial task-      they use unidirectional language models to learn
+            specific architecture modifications.
+            general language representations.
+            BERT is conceptually simple and empirically      We argue that current techniques restrict the
+            powerful.  It obtains new state-of-the-art re-
+            sults on eleven natural language processing
+            cially for the fine-tuning approaches.""";
+
+    /** chunk_007 réel (BERT) : page mono-colonne lue proprement, ordre de lecture intact. */
+    private static final String CHUNK_007_CLEAN = """
+            Throughout this work, a "sentence" can be an arbi-
+            trary span of contiguous text, rather than an actual
+            linguistic sentence. A "sequence" refers to the in-
+            put token sequence to BERT, which may be a sin-
+            gle sentence or two sentences packed together.
+            We use WordPiece embeddings (Wu et al.,
+            2016) with a 30,000 token vocabulary. The first
+            token of every sequence is always a special clas-
+            sification token ([CLS]). The final hidden state
+            corresponding to this token is used as the ag-
+            gregate sequence representation for classification
+            tasks. Sentence pairs are packed together into a
+            single sequence. We differentiate the sentences in
+            two ways. First, we separate them with a special
+            token ([SEP]). Second, we add a learned embed-
+            ding to every token indicating whether it belongs
+            to sentence A or sentence B. As shown in Figure 1,
+            we denote input embedding as E, the final hidden
+            vector of the special token, and the final hidden
+            vector for the ith input token. For a given token,
+            its input representation is constructed by summing
+            the corresponding token, segment, and position.""";
 }
