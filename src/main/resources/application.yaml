@@ -86,9 +86,10 @@ parserag:
     # Palier 1 — pénalité textuelle par chunk (traces intra-ligne d'entrelacement)
     max-anomaly-rate: 0.2       # taux anomalies/ligne (espaces internes + césures-espace) où la pénalité atteint son plancher
     penalty-floor: 0.3          # un chunk entrelacé ne tombe jamais à 0 sur ce seul signal
-    # Palier 2 — score géométrique par page (alternance des X de début de ligne)
-    max-backward-jump-rate: 0.3 # taux de sauts X arrière/ligne où le score de page atteint son plancher
-    page-score-floor: 0.3       # une page entrelacée ne tombe jamais à 0 sur ce seul signal
+    # Palier 3 — score géométrique par chunk (lignes suspectes attribuées au chunk)
+    max-suspect-line-rate: 0.3  # fraction de lignes suspectes/chunk où le score d'ordre de lecture atteint son plancher
+    reading-order-floor: 0.3    # un chunk entrelacé ne tombe jamais à 0 sur ce seul signal
+    manual-review-threshold: 0.4 # confidence finale sous laquelle le chunk est marqué manual_review_needed
 
   # Nettoyage header/footer en couches (cf. package service.headerfooter)
   header-footer-cleaning:

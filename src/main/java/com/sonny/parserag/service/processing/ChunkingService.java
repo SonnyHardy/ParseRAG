@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -40,7 +41,7 @@ public class ChunkingService {
     private void chunkPage(ExtractedPage page, String docId, int[] counter,
                            List<Chunk> result, int maxChunkSize, int overlap, int minChunkSize) {
         String text = page.rawText();
-        double pageReadingOrder = page.readingOrderScore();
+        Set<String> suspectLines = page.reorderSuspectLines();
         int pos = 0;
         int len = text.length();
 
@@ -59,10 +60,10 @@ public class ChunkingService {
 
                 if (para.length() <= maxChunkSize) {
                     addChunk(result, docId, counter, para, ChunkType.PARAGRAPH,
-                            page.pageNumber(), paraOffset, paraOffset + para.length(), pageReadingOrder);
+                            page.pageNumber(), paraOffset, paraOffset + para.length(), suspectLines);
                 } else {
                     splitBySentences(para, paraOffset, page.pageNumber(),
-                            docId, counter, result, maxChunkSize, overlap, minChunkSize, pageReadingOrder);
+                            docId, counter, result, maxChunkSize, overlap, minChunkSize, suspectLines);
                 }
             }
 
@@ -79,7 +80,7 @@ public class ChunkingService {
     private void splitBySentences(String para, int paraOffset, int pageNumber,
                                    String docId, int[] counter, List<Chunk> result,
                                    int maxChunkSize, int overlap, int minChunkSize,
-                                   double pageReadingOrder) {
+                                   Set<String> suspectLines) {
         // Split après ". " pour conserver la ponctuation dans chaque chunk
         String[]      sentences  = para.split("(?<=\\. )");
         StringBuilder current    = new StringBuilder();
@@ -92,7 +93,7 @@ public class ChunkingService {
                     String txt = current.toString().strip();
                     addChunk(result, docId, counter, txt, ChunkType.PARAGRAPH, pageNumber,
                             paraOffset + chunkStart,
-                            paraOffset + chunkStart + current.length(), pageReadingOrder);
+                            paraOffset + chunkStart + current.length(), suspectLines);
                 }
 
                 // ── Overlap : les N derniers chars deviennent le début du suivant
@@ -109,15 +110,36 @@ public class ChunkingService {
             String txt = current.toString().strip();
             addChunk(result, docId, counter, txt, ChunkType.PARAGRAPH, pageNumber,
                     paraOffset + chunkStart,
-                    paraOffset + chunkStart + current.length(), pageReadingOrder);
+                    paraOffset + chunkStart + current.length(), suspectLines);
         }
     }
 
     private void addChunk(List<Chunk> result, String docId, int[] counter,
                           String text, ChunkType type, int page, int charStart, int charEnd,
-                          double pageReadingOrder) {
+                          Set<String> suspectLines) {
         String id = "chunk_%s_%03d".formatted(docId, counter[0]++);
-        double confidence = confidenceCalculator.calculate(text, pageReadingOrder);
-        result.add(Chunk.of(id, text, type, page, charStart, charEnd, confidence));
+        double readingOrder = readingOrderFor(text, suspectLines);
+        double confidence   = confidenceCalculator.calculate(text, readingOrder);
+        boolean manualReview = confidence < appProperties.getConfidence().getManualReviewThreshold();
+        result.add(new Chunk(id, text, type, page, charStart, charEnd, confidence, false, manualReview, null));
+    }
+
+    /**
+     * Facteur d'ordre de lecture ∈ [floor, 1] du chunk (palier 3) : fraction des lignes du chunk
+     * marquées suspectes par l'extracteur (entrelacement de colonnes). Un chunk sans ligne suspecte
+     * vaut 1.0 — un chunk propre situé sur une page par ailleurs entrelacée n'est donc pas pénalisé.
+     */
+    private double readingOrderFor(String text, Set<String> suspectLines) {
+        if (suspectLines.isEmpty()) return 1.0;
+
+        long hits = suspectLines.stream().filter(text::contains).count();
+        if (hits == 0) return 1.0;
+
+        int lines = 1 + (int) text.chars().filter(c -> c == '\n').count();
+        double fraction = Math.min(1.0, (double) hits / lines);
+
+        AppProperties.Confidence cfg = appProperties.getConfidence();
+        double score = 1.0 - fraction / cfg.getMaxSuspectLineRate();
+        return Math.max(cfg.getReadingOrderFloor(), score);
     }
 }

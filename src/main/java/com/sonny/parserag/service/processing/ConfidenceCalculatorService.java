@@ -81,19 +81,19 @@ public class ConfidenceCalculatorService {
     /**
      * Score de confiance ∈ [0, 1], arrondi à 2 décimales.
      *
-     * @param pageReadingOrder score géométrique d'ordre de lecture de la page d'origine (palier 2,
-     *        {@link com.sonny.parserag.model.domain.ExtractedPage#readingOrderScore()}) : module le
-     *        score de façon multiplicative. 1.0 = neutre (page lue dans le bon ordre ou géométrie
-     *        indisponible) ; bas = page entrelacée → tous ses chunks sont tirés vers le bas.
+     * @param readingOrder facteur géométrique d'ordre de lecture du chunk (palier 3, calculé par le
+     *        chunking à partir des lignes suspectes de la page) : module le score de façon
+     *        multiplicative. 1.0 = neutre (chunk lu dans le bon ordre ou géométrie indisponible) ;
+     *        bas = chunk entrelacé.
      */
-    public double calculate(String text, double pageReadingOrder) {
+    public double calculate(String text, double readingOrder) {
         if (text == null) return 0.0;
         String t = text.strip();
         if (t.isEmpty()) return 0.0;
 
         double quality = WEIGHT_LENGTH    * lengthScore(t.length())
                        + WEIGHT_COHERENCE * coherenceScore(t);
-        double confidence = clamp01(pageReadingOrder) * readingOrderScore(t) * densityScore(t) * quality;
+        double confidence = clamp01(readingOrder) * readingOrderScore(t) * densityScore(t) * quality;
 
         return round2(clamp01(confidence));
     }

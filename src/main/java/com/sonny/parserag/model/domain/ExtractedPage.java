@@ -1,23 +1,27 @@
 package com.sonny.parserag.model.domain;
 
+import java.util.Set;
+
 /**
  * Page extraite : texte reconstruit + métadonnées géométriques.
  *
- * @param readingOrderScore confiance d'ordre de lecture de la page ∈ [0, 1] (issue #30, palier 2) :
- *        proche de 1 si les lignes ont été lues dans le bon ordre, basse si l'assemblage a entrelacé
- *        des colonnes (alternance anormale des X de début de ligne). Vaut 1.0 quand l'information
- *        géométrique n'est pas disponible (fallback vision, pages sans texte natif).
+ * @param reorderSuspectLines lignes de la page (texte exact) marquées comme <strong>anomalies
+ *        d'ordre de lecture</strong> (issue #30, palier 3) : lignes démarrant par un saut X arrière
+ *        anormal lors d'un assemblage mono-colonne, symptôme d'un entrelacement de colonnes. Le
+ *        chunking attribue ces lignes à chaque chunk pour un score d'ordre de lecture <em>par
+ *        chunk</em> (un chunk propre sur une page par ailleurs entrelacée n'est plus pénalisé).
+ *        Vide quand l'ordre de lecture est sain ou la géométrie indisponible (fallback vision).
  */
 public record ExtractedPage(
         int pageNumber,
         String rawText,
         boolean hasImages,
         boolean likelyHasTable,
-        double readingOrderScore
+        Set<String> reorderSuspectLines
 ) {
 
-    /** Constructeur de commodité : score d'ordre de lecture par défaut (1.0, neutre). */
+    /** Constructeur de commodité : aucune ligne suspecte (ordre de lecture sain par défaut). */
     public ExtractedPage(int pageNumber, String rawText, boolean hasImages, boolean likelyHasTable) {
-        this(pageNumber, rawText, hasImages, likelyHasTable, 1.0);
+        this(pageNumber, rawText, hasImages, likelyHasTable, Set.of());
     }
 }

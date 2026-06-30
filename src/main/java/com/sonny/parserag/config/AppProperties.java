@@ -107,13 +107,16 @@ public class AppProperties {
         @Min(0) @Max(1)
         private double penaltyFloor;
 
-        // ── Palier 2 : score géométrique par page (alternance des X de début de ligne) ──
-        /** Taux de sauts X arrière/ligne à partir duquel le score d'ordre de lecture de la page atteint son plancher. */
+        // ── Palier 3 : score géométrique par chunk (lignes suspectes attribuées au chunk) ──
+        /** Fraction de lignes suspectes/chunk à partir de laquelle le score d'ordre de lecture du chunk atteint son plancher. */
         @Positive
-        private double maxBackwardJumpRate;
-        /** Plancher du score de page : une page entrelacée ne tombe jamais à 0 sur ce seul signal. */
+        private double maxSuspectLineRate;
+        /** Plancher du facteur d'ordre de lecture par chunk : un chunk entrelacé ne tombe jamais à 0 sur ce seul signal. */
         @Min(0) @Max(1)
-        private double pageScoreFloor;
+        private double readingOrderFloor;
+        /** Confidence finale en deçà de laquelle le chunk est marqué {@code manual_review_needed}. */
+        @Min(0) @Max(1)
+        private double manualReviewThreshold;
     }
 
     /** Nettoyage header/footer en couches (cf. package service.headerfooter). */

@@ -38,7 +38,7 @@ class LineStripper {
             StripResult res = stripLines(page.rawText(), toRemove);
             removed += res.removed();
             cleaned.add(new ExtractedPage(page.pageNumber(), res.text(),
-                    page.hasImages(), page.likelyHasTable(), page.readingOrderScore()));
+                    page.hasImages(), page.likelyHasTable(), page.reorderSuspectLines()));
         }
         return new Result(cleaned, removed);
     }
