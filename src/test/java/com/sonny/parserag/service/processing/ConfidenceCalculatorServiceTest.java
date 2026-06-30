@@ -117,6 +117,16 @@ class ConfidenceCalculatorServiceTest {
     }
 
     @Test
+    void pageReadingOrder_modulatesConfidenceMultiplicatively() {
+        String clean = "This is a perfectly clean paragraph that reads in order and ends well.";
+        double full   = calc.calculate(clean, 1.0);   // page lue dans le bon ordre
+        double penal  = calc.calculate(clean, 0.3);   // page entrelacée (palier 2)
+        assertTrue(penal < full, "un score de page bas doit tirer la confidence vers le bas");
+        // Modulation multiplicative : ~0.3× le score pleine page (à l'arrondi près).
+        assertEquals(0.3 * full, penal, 0.01);
+    }
+
+    @Test
     void pivot_interleavedChunkScoresBelowCleanChunk() {
         double interleaved = calc.calculate(CHUNK_000_INTERLEAVED);
         double clean       = calc.calculate(CHUNK_007_CLEAN);

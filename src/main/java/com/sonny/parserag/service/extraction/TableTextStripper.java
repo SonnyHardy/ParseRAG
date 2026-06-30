@@ -66,7 +66,8 @@ public class TableTextStripper {
             Set<String> toRemove = linesByPage.getOrDefault(page.pageNumber(), Set.of());
             StripResult res = stripLines(page.rawText(), toRemove);
             removed += res.removed();
-            cleaned.add(new ExtractedPage(page.pageNumber(), res.text(), page.hasImages(), page.likelyHasTable()));
+            cleaned.add(new ExtractedPage(page.pageNumber(), res.text(),
+                    page.hasImages(), page.likelyHasTable(), page.readingOrderScore()));
         }
 
         log.info("Table text stripping — docId: {}, lines removed: {}", doc.documentId(), removed);

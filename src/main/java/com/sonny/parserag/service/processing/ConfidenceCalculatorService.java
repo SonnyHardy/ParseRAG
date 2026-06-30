@@ -73,15 +73,27 @@ public class ConfidenceCalculatorService {
     /** (B) Lettre + trait d'union + espace : césure interrompue par un fragment d'une autre colonne. */
     private static final Pattern HYPHEN_THEN_SPACE  = Pattern.compile("\\p{L}-[ \\t]");
 
-    /** Score de confiance ∈ [0, 1], arrondi à 2 décimales. */
+    /** Score de confiance ∈ [0, 1] sans information de page (score de page neutre = 1.0). */
     public double calculate(String text) {
+        return calculate(text, 1.0);
+    }
+
+    /**
+     * Score de confiance ∈ [0, 1], arrondi à 2 décimales.
+     *
+     * @param pageReadingOrder score géométrique d'ordre de lecture de la page d'origine (palier 2,
+     *        {@link com.sonny.parserag.model.domain.ExtractedPage#readingOrderScore()}) : module le
+     *        score de façon multiplicative. 1.0 = neutre (page lue dans le bon ordre ou géométrie
+     *        indisponible) ; bas = page entrelacée → tous ses chunks sont tirés vers le bas.
+     */
+    public double calculate(String text, double pageReadingOrder) {
         if (text == null) return 0.0;
         String t = text.strip();
         if (t.isEmpty()) return 0.0;
 
         double quality = WEIGHT_LENGTH    * lengthScore(t.length())
                        + WEIGHT_COHERENCE * coherenceScore(t);
-        double confidence = readingOrderScore(t) * densityScore(t) * quality;
+        double confidence = clamp01(pageReadingOrder) * readingOrderScore(t) * densityScore(t) * quality;
 
         return round2(clamp01(confidence));
     }

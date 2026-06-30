@@ -99,12 +99,21 @@ public class AppProperties {
      */
     @Data
     public static class Confidence {
+        // ── Palier 1 : pénalité textuelle par chunk (traces intra-ligne d'entrelacement) ──
         /** Taux d'anomalies/ligne à partir duquel la pénalité d'ordre de lecture atteint son plancher. */
         @Positive
         private double maxAnomalyRate;
         /** Plancher de la pénalité : un chunk désordonné ne tombe jamais à 0 sur ce seul signal. */
         @Min(0) @Max(1)
         private double penaltyFloor;
+
+        // ── Palier 2 : score géométrique par page (alternance des X de début de ligne) ──
+        /** Taux de sauts X arrière/ligne à partir duquel le score d'ordre de lecture de la page atteint son plancher. */
+        @Positive
+        private double maxBackwardJumpRate;
+        /** Plancher du score de page : une page entrelacée ne tombe jamais à 0 sur ce seul signal. */
+        @Min(0) @Max(1)
+        private double pageScoreFloor;
     }
 
     /** Nettoyage header/footer en couches (cf. package service.headerfooter). */

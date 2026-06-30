@@ -63,6 +63,17 @@ public class PdfTextExtractorService {
     /** Fraction minimale de paires (triées par Y) où la valeur croît : une numérotation augmente vers le bas. */
     private static final float   LINE_NUMBER_MONOTONIC_MIN = 0.70f;
 
+    // ── Score d'ordre de lecture par page (issue #30, palier 2) ─────────────────────────
+    /** Saut X arrière entre deux lignes (en ratio de la largeur de page) au-delà duquel on compte un retour de colonne anormal. */
+    private static final float BACKWARD_JUMP_MIN_RATIO = 0.10f;
+    /** En deçà de ce nombre de lignes, la page est trop courte pour juger son ordre de lecture (score neutre 1.0). */
+    private static final int   READING_ORDER_MIN_LINES = 5;
+
+    /** Texte reconstruit d'une page + son score d'ordre de lecture ∈ [0, 1]. */
+    private record PageExtraction(String text, double readingOrderScore) {}
+    /** Résultat d'assemblage : texte + X de début de chaque ligne, dans l'ordre de lecture produit. */
+    private record Assembled(String text, List<Float> lineStartX) {}
+
     private final AppProperties appProperties;
     private final PageGeometryAnalyzer pageGeometryAnalyzer;
 
@@ -128,16 +139,18 @@ public class PdfTextExtractorService {
             long pageStart = System.currentTimeMillis();
             PDPage pdPage  = document.getPage(pageNum - 1);
 
-            String rawText = extractPageText(document, pdPage, pageNum);
+            PageExtraction extraction = extractPageText(document, pdPage, pageNum);
+            String rawText = extraction.text();
 
             boolean hasImages      = pageHasImages(pdPage);
             boolean likelyHasTable = pageLooksTabular(rawText);
 
-            log.debug("Page {}/{} extracted in {}ms ({} chars). Images: {}, Table: {}",
+            log.debug("Page {}/{} extracted in {}ms ({} chars). Images: {}, Table: {}, reading-order: {}",
                     pageNum, pageCount, System.currentTimeMillis() - pageStart,
-                    rawText.length(), hasImages, likelyHasTable);
+                    rawText.length(), hasImages, likelyHasTable, extraction.readingOrderScore());
 
-            pages.add(new ExtractedPage(pageNum, rawText, hasImages, likelyHasTable));
+            pages.add(new ExtractedPage(pageNum, rawText, hasImages, likelyHasTable,
+                    extraction.readingOrderScore()));
         }
 
         return pages;
@@ -162,10 +175,10 @@ public class PdfTextExtractorService {
      * <p><strong>Coût :</strong> 1 parse PDFBox / page, indépendamment du nombre
      * de colonnes. Le reste est en mémoire (O(n log n) pour le tri par colonne).
      */
-    private String extractPageText(PDDocument doc, PDPage page, int pageNum) throws IOException {
+    private PageExtraction extractPageText(PDDocument doc, PDPage page, int pageNum) throws IOException {
 
         List<Fragment> fragments = pageGeometryAnalyzer.fragments(doc, pageNum);
-        if (fragments.isEmpty()) return "";
+        if (fragments.isEmpty()) return new PageExtraction("", 1.0);
 
         float pageWidth  = page.getMediaBox().getWidth();
         float pageHeight = page.getMediaBox().getHeight();
@@ -173,27 +186,60 @@ public class PdfTextExtractorService {
         // Retire les colonnes de numéros de ligne en marge (copies de relecture) avant tout assemblage.
         if (appProperties.getExtraction().isStripLineNumbers()) {
             fragments = stripLineNumberColumns(fragments, pageHeight, pageNum);
-            if (fragments.isEmpty()) return "";
+            if (fragments.isEmpty()) return new PageExtraction("", 1.0);
         }
 
         float[] splits = pageGeometryAnalyzer.columnSplits(fragments, pageWidth, pageHeight);
 
+        Assembled assembled;
+        double readingOrder;
         if (splits.length == 0) {
-            return assembleAsSingleColumn(fragments);
+            // Pas de gouttière détectée → assemblage mono-colonne. C'est ICI que deux colonnes mal
+            // séparées s'entrelacent (cf. BERT p.1). On note donc l'ordre de lecture sur ce flux.
+            assembled = assembleAsSingleColumn(fragments);
+            readingOrder = pageReadingOrderScore(assembled.lineStartX(), pageWidth);
+        } else {
+            assembled = assembleAsColumns(fragments, splits);
+
+            // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
+            // massacre la structure. On bascule en mono-colonne (tri Y → X global).
+            if (looksLikeTable(assembled.text())) {
+                log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
+                assembled = assembleAsSingleColumn(fragments);
+            } else {
+                log.debug("Page {} — {} columns detected, splits at {}",
+                        pageNum, splits.length + 1, Arrays.toString(splits));
+            }
+            // Colonnes correctement séparées (assemblées colonne par colonne) : on fait confiance à
+            // l'ordre. Le bruit local d'une figure relève du palier 1, pas d'une pénalité de page.
+            readingOrder = 1.0;
         }
 
-        String multiColumnText = assembleAsColumns(fragments, splits);
+        return new PageExtraction(assembled.text(), readingOrder);
+    }
 
-        // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
-        // massacre la structure. On bascule en mono-colonne (tri Y → X global).
-        if (looksLikeTable(multiColumnText)) {
-            log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
-            return assembleAsSingleColumn(fragments);
+    /**
+     * Score d'ordre de lecture de la page ∈ [floor, 1] (palier 2), calculé sur le flux mono-colonne.
+     * Sur la suite des X de début de chaque ligne <em>dans l'ordre de lecture produit</em>, on compte
+     * les <strong>sauts arrière anormaux</strong> (une ligne qui démarre nettement à gauche de la
+     * précédente) : rares sur une vraie mono-colonne, fréquents quand l'assemblage a entrelacé deux
+     * colonnes mal séparées (alternance gauche/droite à chaque ligne). Le score décroît avec le taux
+     * de sauts arrière jusqu'à un plancher configurable.
+     */
+    private double pageReadingOrderScore(List<Float> lineStartX, float pageWidth) {
+        int n = lineStartX.size();
+        if (n < READING_ORDER_MIN_LINES) return 1.0;
+
+        float threshold = pageWidth * BACKWARD_JUMP_MIN_RATIO;
+        int backward = 0;
+        for (int i = 1; i < n; i++) {
+            if (lineStartX.get(i - 1) - lineStartX.get(i) > threshold) backward++;
         }
+        double rate = (double) backward / (n - 1);
 
-        log.debug("Page {} — {} columns detected, splits at {}",
-                pageNum, splits.length + 1, Arrays.toString(splits));
-        return multiColumnText;
+        AppProperties.Confidence cfg = appProperties.getConfidence();
+        double score = 1.0 - rate / cfg.getMaxBackwardJumpRate();
+        return Math.max(cfg.getPageScoreFloor(), Math.min(1.0, score));
     }
 
     // =========================================================================
@@ -333,28 +379,31 @@ public class PdfTextExtractorService {
      * baseline avec espacement reconstitué proportionnellement à l'écart X réel
      * entre fragments d'une même ligne.
      */
-    private String assembleAsSingleColumn(List<Fragment> fragments) {
-        if (fragments.isEmpty()) return "";
+    private Assembled assembleAsSingleColumn(List<Fragment> fragments) {
+        if (fragments.isEmpty()) return new Assembled("", List.of());
 
         List<Fragment> sorted = new ArrayList<>(fragments);
         sorted.sort(Comparator.comparingDouble(Fragment::y)
                               .thenComparingDouble(Fragment::xStart));
 
         StringBuilder out = new StringBuilder(8192);
+        List<Float> lineStartX = new ArrayList<>();
         Fragment prev = null;
 
         for (Fragment f : sorted) {
             if (prev == null) {
                 out.append(f.text());
+                lineStartX.add(f.xStart());
             } else if (Math.abs(f.y() - prev.y()) <= SAME_LINE_TOLERANCE_PT) {
                 appendInterFragmentSpacing(out, prev, f);
                 out.append(f.text());
             } else {
                 out.append('\n').append(f.text());
+                lineStartX.add(f.xStart());
             }
             prev = f;
         }
-        return out.toString().strip();
+        return new Assembled(out.toString().strip(), lineStartX);
     }
 
     /**
@@ -362,7 +411,7 @@ public class PdfTextExtractorService {
      * splits, puis chaque colonne est assemblée en mono et concaténée avec un
      * saut de ligne. Préserve l'ordre de lecture gauche → droite.
      */
-    private String assembleAsColumns(List<Fragment> fragments, float[] splits) {
+    private Assembled assembleAsColumns(List<Fragment> fragments, float[] splits) {
         int numCols = splits.length + 1;
         List<List<Fragment>> buckets = new ArrayList<>(numCols);
         for (int i = 0; i < numCols; i++) buckets.add(new ArrayList<>());
@@ -375,13 +424,17 @@ public class PdfTextExtractorService {
         }
 
         StringBuilder out = new StringBuilder(8192);
+        List<Float> lineStartX = new ArrayList<>();
         for (List<Fragment> bucket : buckets) {
-            String colText = assembleAsSingleColumn(bucket);
-            if (colText.isBlank()) continue;
+            Assembled col = assembleAsSingleColumn(bucket);
+            if (col.text().isBlank()) continue;
             if (!out.isEmpty()) out.append('\n');
-            out.append(colText);
+            out.append(col.text());
+            // Concaténer les débuts de ligne colonne par colonne : le passage d'une colonne à la
+            // suivante est un saut X *avant* (gauche → droite), donc neutre pour le score.
+            lineStartX.addAll(col.lineStartX());
         }
-        return out.toString();
+        return new Assembled(out.toString(), lineStartX);
     }
 
     /**

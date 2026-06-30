@@ -40,6 +40,7 @@ public class ChunkingService {
     private void chunkPage(ExtractedPage page, String docId, int[] counter,
                            List<Chunk> result, int maxChunkSize, int overlap, int minChunkSize) {
         String text = page.rawText();
+        double pageReadingOrder = page.readingOrderScore();
         int pos = 0;
         int len = text.length();
 
@@ -58,10 +59,10 @@ public class ChunkingService {
 
                 if (para.length() <= maxChunkSize) {
                     addChunk(result, docId, counter, para, ChunkType.PARAGRAPH,
-                            page.pageNumber(), paraOffset, paraOffset + para.length());
+                            page.pageNumber(), paraOffset, paraOffset + para.length(), pageReadingOrder);
                 } else {
                     splitBySentences(para, paraOffset, page.pageNumber(),
-                            docId, counter, result, maxChunkSize, overlap, minChunkSize);
+                            docId, counter, result, maxChunkSize, overlap, minChunkSize, pageReadingOrder);
                 }
             }
 
@@ -77,7 +78,8 @@ public class ChunkingService {
      */
     private void splitBySentences(String para, int paraOffset, int pageNumber,
                                    String docId, int[] counter, List<Chunk> result,
-                                   int maxChunkSize, int overlap, int minChunkSize) {
+                                   int maxChunkSize, int overlap, int minChunkSize,
+                                   double pageReadingOrder) {
         // Split après ". " pour conserver la ponctuation dans chaque chunk
         String[]      sentences  = para.split("(?<=\\. )");
         StringBuilder current    = new StringBuilder();
@@ -90,7 +92,7 @@ public class ChunkingService {
                     String txt = current.toString().strip();
                     addChunk(result, docId, counter, txt, ChunkType.PARAGRAPH, pageNumber,
                             paraOffset + chunkStart,
-                            paraOffset + chunkStart + current.length());
+                            paraOffset + chunkStart + current.length(), pageReadingOrder);
                 }
 
                 // ── Overlap : les N derniers chars deviennent le début du suivant
@@ -107,14 +109,15 @@ public class ChunkingService {
             String txt = current.toString().strip();
             addChunk(result, docId, counter, txt, ChunkType.PARAGRAPH, pageNumber,
                     paraOffset + chunkStart,
-                    paraOffset + chunkStart + current.length());
+                    paraOffset + chunkStart + current.length(), pageReadingOrder);
         }
     }
 
     private void addChunk(List<Chunk> result, String docId, int[] counter,
-                          String text, ChunkType type, int page, int charStart, int charEnd) {
+                          String text, ChunkType type, int page, int charStart, int charEnd,
+                          double pageReadingOrder) {
         String id = "chunk_%s_%03d".formatted(docId, counter[0]++);
-        double confidence = confidenceCalculator.calculate(text);
+        double confidence = confidenceCalculator.calculate(text, pageReadingOrder);
         result.add(Chunk.of(id, text, type, page, charStart, charEnd, confidence));
     }
 }
