@@ -23,18 +23,15 @@ import java.util.regex.Pattern;
  * </pre>
  *
  * <ul>
- *   <li><strong>readingOrder</strong> — pénalise les traces textuelles d'un entrelacement de
- *       colonnes : <em>(A)</em> espaces internes larges (≥ {@link #INTERIOR_SPACE_MIN} espaces en
- *       milieu de ligne, réinjectés par l'extracteur quand deux fragments de colonnes différentes
- *       partagent une baseline) et <em>(B)</em> césures suivies d'un espace (« apply- Abstract »,
- *       « down- We » : une césure normale est suivie d'un retour ligne et d'une minuscule, pas
- *       d'un espace + mot). La pénalité décroît avec le taux d'anomalies/ligne, jusqu'à un
- *       plancher configurable.</li>
+ *   <li><strong>readingOrder</strong> — pénalise la <em>césure suivie d'un espace</em> (« apply-
+ *       Abstract » : une césure normale est suivie d'un retour ligne et d'une minuscule, pas d'un
+ *       espace + mot), trace spécifique du recollage de colonnes. Insensible au texte justifié.
+ *       L'entrelacement géométrique réel est capté par le palier 3, pas ici.</li>
  *   <li><strong>density</strong> — proportion de caractères non-espace.</li>
  *   <li><strong>length</strong> — pénalise les fragments trop courts (artefacts) et,
  *       plus légèrement, les chunks trop longs.</li>
- *   <li><strong>coherence</strong> — majuscule initiale, ponctuation finale, et densité
- *       lexicale typique de la prose.</li>
+ *   <li><strong>coherence</strong> — socle + prose (ratio lexical), modulé faiblement par la
+ *       majuscule initiale et la ponctuation finale (simples bords de chunk).</li>
  * </ul>
  *
  * <p><strong>Portée assumée</strong> : ce score mesure l'ordre de lecture, pas la qualité
@@ -59,19 +56,24 @@ public class ConfidenceCalculatorService {
     private static final int LENGTH_MAX_GOOD = 1500;
     private static final int LENGTH_ARTIFACT = 30;
 
-    /** Bornes du ratio mots/caractères typique de la prose normale. */
-    private static final double WORD_RATIO_MIN = 0.12;
-    private static final double WORD_RATIO_MAX = 0.25;
+    /**
+     * Bornes du ratio mots/caractères acceptable comme prose. Volontairement large pour couvrir
+     * les langues à mots composés (allemand, ratio bas) et la prose à mots courts (légal FR, ratio
+     * haut) — un créneau trop étroit pénalisait à tort ces textes pourtant bien extraits.
+     */
+    private static final double WORD_RATIO_MIN = 0.08;
+    private static final double WORD_RATIO_MAX = 0.30;
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
-    // ── Signaux d'ordre de lecture (palier 1) ──────────────────────────────────────────
-    /** Nombre minimal d'espaces consécutifs en milieu de ligne considéré comme trace d'entrelacement. */
-    private static final int INTERIOR_SPACE_MIN = 3;
-    /** (A) Un vide horizontal large bordé de texte sur une même ligne (colonnes recollées). */
-    private static final Pattern INTERIOR_SPACE_RUN = Pattern.compile("\\S {" + INTERIOR_SPACE_MIN + ",}\\S");
-    /** (B) Lettre + trait d'union + espace : césure interrompue par un fragment d'une autre colonne. */
-    private static final Pattern HYPHEN_THEN_SPACE  = Pattern.compile("\\p{L}-[ \\t]");
+    // ── Signal d'ordre de lecture textuel (palier 1) ────────────────────────────────────
+    /**
+     * Césure interrompue par un fragment d'une autre colonne : lettre + trait d'union + espace
+     * (« apply- Abstract »). Symptôme <em>spécifique</em> du recollage de colonnes, insensible au
+     * texte justifié (contrairement aux vides internes, retirés du scoring — cf. issue calibration).
+     * L'entrelacement géométrique réel est détecté par le palier 3 (sauts X), pas ici.
+     */
+    private static final Pattern HYPHEN_THEN_SPACE = Pattern.compile("\\p{L}-[ \\t]");
 
     /** Score de confiance ∈ [0, 1] sans information de page (score de page neutre = 1.0). */
     public double calculate(String text) {
@@ -99,16 +101,17 @@ public class ConfidenceCalculatorService {
     }
 
     /**
-     * Pénalité ∈ [floor, 1] reflétant l'ordre de lecture : 1.0 si aucune anomalie, décroissant
-     * linéairement avec le taux d'anomalies/ligne jusqu'au plancher {@code penalty-floor}.
+     * Pénalité ∈ [floor, 1] reflétant l'ordre de lecture : 1.0 si aucune césure-espace, décroissant
+     * linéairement avec leur taux/ligne jusqu'au plancher {@code penalty-floor}. Ne s'appuie que sur
+     * la césure-espace ({@link #HYPHEN_THEN_SPACE}), signal spécifique du recollage — les vides
+     * internes ont été retirés car ils confondaient texte justifié / titres numérotés et entrelacement.
      */
     double readingOrderScore(String t) {
-        int anomalies = count(INTERIOR_SPACE_RUN, t) + count(HYPHEN_THEN_SPACE, t);
+        int anomalies = count(HYPHEN_THEN_SPACE, t);
         if (anomalies == 0) return 1.0;
 
         int lines = 1 + (int) t.chars().filter(c -> c == '\n').count();
         double rate = (double) anomalies / lines;
-
         double penalty = 1.0 - rate / appProperties.getConfidence().getMaxAnomalyRate();
         return Math.max(appProperties.getConfidence().getPenaltyFloor(), penalty);
     }
@@ -136,17 +139,24 @@ public class ConfidenceCalculatorService {
         return 0.8;
     }
 
-    /** Somme de trois indices de « bonne forme » : majuscule initiale, ponctuation finale, ratio lexical. */
+    /**
+     * Indice de « bonne forme » ∈ [0, 1]. Un <strong>socle</strong> (0.3) + un bonus de prose
+     * (ratio lexical) constituent l'essentiel ; la majuscule initiale et la ponctuation finale ne
+     * pèsent que faiblement (0.2 chacune), car leur absence trahit le plus souvent un simple bord de
+     * chunk (overlap mi-phrase) et non une mauvaise extraction — les sur-pondérer pénalisait à tort
+     * les chunks de continuation.
+     */
     double coherenceScore(String t) {
-        double score = 0.0;
-        if (Character.isUpperCase(t.charAt(0))) score += 0.4;
-
-        char last = t.charAt(t.length() - 1);
-        if (last == '.' || last == '?' || last == '!' || last == ':') score += 0.3;
+        double score = 0.3; // socle : un chunk de prose lisible n'est pas « incohérent » par défaut
 
         int words = WHITESPACE.split(t).length;
         double wordRatio = (double) words / t.length();
         if (wordRatio >= WORD_RATIO_MIN && wordRatio <= WORD_RATIO_MAX) score += 0.3;
+
+        if (Character.isUpperCase(t.charAt(0))) score += 0.2;
+
+        char last = t.charAt(t.length() - 1);
+        if (last == '.' || last == '?' || last == '!' || last == ':') score += 0.2;
 
         return score;
     }

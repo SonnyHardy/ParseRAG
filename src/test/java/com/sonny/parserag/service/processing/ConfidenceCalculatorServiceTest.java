@@ -92,9 +92,21 @@ class ConfidenceCalculatorServiceTest {
 
     @Test
     void coherenceScore_components() {
-        assertEquals(1.0, calc.coherenceScore("Hello world."), 1e-9); // majuscule + point + ratio prose
-        assertEquals(0.3, calc.coherenceScore("hello world"), 1e-9);  // ratio seul (pas de maj, pas de ponct)
-        assertEquals(0.7, calc.coherenceScore("Hello world"), 1e-9);  // majuscule + ratio, sans ponct
+        // socle 0.3 + ratio prose 0.3 + majuscule 0.2 + ponctuation 0.2
+        assertEquals(1.0, calc.coherenceScore("Hello world."), 1e-9); // tout présent
+        assertEquals(0.6, calc.coherenceScore("hello world"), 1e-9);  // socle + ratio (continuation : pas de maj/ponct)
+        assertEquals(0.8, calc.coherenceScore("Hello world"), 1e-9);  // socle + ratio + majuscule, sans ponct
+    }
+
+    @Test
+    void readingOrder_ignoresJustifiedGapsAndHeadings_flagsBrokenHyphenation() {
+        // Texte justifié / titre numéroté : les vides internes larges ne sont PLUS pénalisés
+        // (ils confondaient justification et entrelacement — faux positifs légaux/allemands).
+        assertEquals(1.0, calc.readingOrderScore("1.   Le traitement des données à caractère personnel"), 1e-9);
+        assertEquals(1.0, calc.readingOrderScore("Universität   Paderborn:   Studie   zur   Auswirkung"), 1e-9);
+        assertEquals(1.0, calc.readingOrderScore("4.1   Funktionen zur Reduzierung von Ablenkung"), 1e-9);
+        // Mais la césure-espace (recollage de colonnes) reste pénalisée.
+        assertTrue(calc.readingOrderScore("strategies for apply- Abstract\ning pre-trained to down- We") < 0.6);
     }
 
     // ── Reading-order (issue #30, palier 1) ────────────────────────────────────
