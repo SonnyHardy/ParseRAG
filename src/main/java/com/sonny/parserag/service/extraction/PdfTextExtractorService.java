@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,19 @@ public class PdfTextExtractorService {
     private static final float   LINE_NUMBER_MIN_DENSITY = 0.30f;
     /** Fraction minimale de paires (triées par Y) où la valeur croît : une numérotation augmente vers le bas. */
     private static final float   LINE_NUMBER_MONOTONIC_MIN = 0.70f;
+
+    // ── Ordre de lecture : détection des lignes suspectes (issue #30, palier 3) ──────────
+    /** Saut X arrière entre deux lignes (en ratio de la largeur de page) au-delà duquel une ligne est suspecte. */
+    private static final float BACKWARD_JUMP_MIN_RATIO = 0.10f;
+    /** En deçà de ce nombre de lignes, la page est trop courte pour juger son ordre de lecture. */
+    private static final int   READING_ORDER_MIN_LINES = 5;
+    /** Longueur minimale d'une ligne suspecte retenue (évite les faux appariements sur des lignes très courtes). */
+    private static final int   MIN_SUSPECT_LINE_LEN    = 5;
+
+    /** Texte reconstruit d'une page + ses lignes suspectes d'ordre de lecture (texte exact). */
+    private record PageExtraction(String text, Set<String> reorderSuspectLines) {}
+    /** Résultat d'assemblage : texte + X et texte de chaque ligne, dans l'ordre de lecture produit. */
+    private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts) {}
 
     private final AppProperties appProperties;
     private final PageGeometryAnalyzer pageGeometryAnalyzer;
@@ -128,16 +142,18 @@ public class PdfTextExtractorService {
             long pageStart = System.currentTimeMillis();
             PDPage pdPage  = document.getPage(pageNum - 1);
 
-            String rawText = extractPageText(document, pdPage, pageNum);
+            PageExtraction extraction = extractPageText(document, pdPage, pageNum);
+            String rawText = extraction.text();
 
             boolean hasImages      = pageHasImages(pdPage);
             boolean likelyHasTable = pageLooksTabular(rawText);
 
-            log.debug("Page {}/{} extracted in {}ms ({} chars). Images: {}, Table: {}",
+            log.debug("Page {}/{} extracted in {}ms ({} chars). Images: {}, Table: {}, reorder-suspect lines: {}",
                     pageNum, pageCount, System.currentTimeMillis() - pageStart,
-                    rawText.length(), hasImages, likelyHasTable);
+                    rawText.length(), hasImages, likelyHasTable, extraction.reorderSuspectLines().size());
 
-            pages.add(new ExtractedPage(pageNum, rawText, hasImages, likelyHasTable));
+            pages.add(new ExtractedPage(pageNum, rawText, hasImages, likelyHasTable,
+                    extraction.reorderSuspectLines()));
         }
 
         return pages;
@@ -162,10 +178,10 @@ public class PdfTextExtractorService {
      * <p><strong>Coût :</strong> 1 parse PDFBox / page, indépendamment du nombre
      * de colonnes. Le reste est en mémoire (O(n log n) pour le tri par colonne).
      */
-    private String extractPageText(PDDocument doc, PDPage page, int pageNum) throws IOException {
+    private PageExtraction extractPageText(PDDocument doc, PDPage page, int pageNum) throws IOException {
 
         List<Fragment> fragments = pageGeometryAnalyzer.fragments(doc, pageNum);
-        if (fragments.isEmpty()) return "";
+        if (fragments.isEmpty()) return new PageExtraction("", Set.of());
 
         float pageWidth  = page.getMediaBox().getWidth();
         float pageHeight = page.getMediaBox().getHeight();
@@ -173,27 +189,59 @@ public class PdfTextExtractorService {
         // Retire les colonnes de numéros de ligne en marge (copies de relecture) avant tout assemblage.
         if (appProperties.getExtraction().isStripLineNumbers()) {
             fragments = stripLineNumberColumns(fragments, pageHeight, pageNum);
-            if (fragments.isEmpty()) return "";
+            if (fragments.isEmpty()) return new PageExtraction("", Set.of());
         }
 
         float[] splits = pageGeometryAnalyzer.columnSplits(fragments, pageWidth, pageHeight);
 
+        Assembled assembled;
+        Set<String> suspectLines;
         if (splits.length == 0) {
-            return assembleAsSingleColumn(fragments);
+            // Pas de gouttière détectée → assemblage mono-colonne. C'est ICI que deux colonnes mal
+            // séparées s'entrelacent (cf. BERT p.1). On relève les lignes en désordre sur ce flux.
+            assembled = assembleAsSingleColumn(fragments);
+            suspectLines = computeSuspectLines(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+        } else {
+            assembled = assembleAsColumns(fragments, splits);
+
+            // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
+            // massacre la structure. On bascule en mono-colonne (tri Y → X global).
+            if (looksLikeTable(assembled.text())) {
+                log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
+                assembled = assembleAsSingleColumn(fragments);
+            } else {
+                log.debug("Page {} — {} columns detected, splits at {}",
+                        pageNum, splits.length + 1, Arrays.toString(splits));
+            }
+            // Colonnes correctement séparées (assemblées colonne par colonne) : on fait confiance à
+            // l'ordre. Le bruit local d'une figure relève du palier 1, pas d'une anomalie de lecture.
+            suspectLines = Set.of();
         }
 
-        String multiColumnText = assembleAsColumns(fragments, splits);
+        return new PageExtraction(assembled.text(), suspectLines);
+    }
 
-        // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
-        // massacre la structure. On bascule en mono-colonne (tri Y → X global).
-        if (looksLikeTable(multiColumnText)) {
-            log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
-            return assembleAsSingleColumn(fragments);
+    /**
+     * Lignes en désordre d'ordre de lecture (palier 3), détectées sur le flux mono-colonne. Sur la
+     * suite des X de début de chaque ligne <em>dans l'ordre de lecture produit</em>, une ligne est
+     * <strong>suspecte</strong> si elle démarre par un <em>saut X arrière anormal</em> (nettement à
+     * gauche de la ligne précédente) : rare sur une vraie mono-colonne, systématique quand
+     * l'assemblage a entrelacé deux colonnes (retour gauche après une ligne de la colonne droite).
+     * Le texte exact de ces lignes est renvoyé pour permettre leur attribution par chunk au chunking.
+     */
+    private Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
+        int n = lineStartX.size();
+        if (n < READING_ORDER_MIN_LINES) return Set.of();
+
+        float threshold = pageWidth * BACKWARD_JUMP_MIN_RATIO;
+        Set<String> suspect = new HashSet<>();
+        for (int i = 1; i < n; i++) {
+            if (lineStartX.get(i - 1) - lineStartX.get(i) > threshold) {
+                String line = lineTexts.get(i).strip();
+                if (line.length() >= MIN_SUSPECT_LINE_LEN) suspect.add(line);
+            }
         }
-
-        log.debug("Page {} — {} columns detected, splits at {}",
-                pageNum, splits.length + 1, Arrays.toString(splits));
-        return multiColumnText;
+        return suspect;
     }
 
     // =========================================================================
@@ -333,28 +381,39 @@ public class PdfTextExtractorService {
      * baseline avec espacement reconstitué proportionnellement à l'écart X réel
      * entre fragments d'une même ligne.
      */
-    private String assembleAsSingleColumn(List<Fragment> fragments) {
-        if (fragments.isEmpty()) return "";
+    private Assembled assembleAsSingleColumn(List<Fragment> fragments) {
+        if (fragments.isEmpty()) return new Assembled("", List.of(), List.of());
 
         List<Fragment> sorted = new ArrayList<>(fragments);
         sorted.sort(Comparator.comparingDouble(Fragment::y)
                               .thenComparingDouble(Fragment::xStart));
 
         StringBuilder out = new StringBuilder(8192);
+        List<Float>  lineStartX = new ArrayList<>();
+        List<String> lineTexts  = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
         Fragment prev = null;
 
         for (Fragment f : sorted) {
             if (prev == null) {
                 out.append(f.text());
+                line.append(f.text());
+                lineStartX.add(f.xStart());
             } else if (Math.abs(f.y() - prev.y()) <= SAME_LINE_TOLERANCE_PT) {
-                appendInterFragmentSpacing(out, prev, f);
-                out.append(f.text());
+                String sp = interFragmentSpacing(prev, f);
+                out.append(sp).append(f.text());
+                line.append(sp).append(f.text());
             } else {
+                lineTexts.add(line.toString());
+                line.setLength(0);
                 out.append('\n').append(f.text());
+                line.append(f.text());
+                lineStartX.add(f.xStart());
             }
             prev = f;
         }
-        return out.toString().strip();
+        if (prev != null) lineTexts.add(line.toString());
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts);
     }
 
     /**
@@ -362,7 +421,7 @@ public class PdfTextExtractorService {
      * splits, puis chaque colonne est assemblée en mono et concaténée avec un
      * saut de ligne. Préserve l'ordre de lecture gauche → droite.
      */
-    private String assembleAsColumns(List<Fragment> fragments, float[] splits) {
+    private Assembled assembleAsColumns(List<Fragment> fragments, float[] splits) {
         int numCols = splits.length + 1;
         List<List<Fragment>> buckets = new ArrayList<>(numCols);
         for (int i = 0; i < numCols; i++) buckets.add(new ArrayList<>());
@@ -375,13 +434,17 @@ public class PdfTextExtractorService {
         }
 
         StringBuilder out = new StringBuilder(8192);
+        List<Float>  lineStartX = new ArrayList<>();
+        List<String> lineTexts  = new ArrayList<>();
         for (List<Fragment> bucket : buckets) {
-            String colText = assembleAsSingleColumn(bucket);
-            if (colText.isBlank()) continue;
+            Assembled col = assembleAsSingleColumn(bucket);
+            if (col.text().isBlank()) continue;
             if (!out.isEmpty()) out.append('\n');
-            out.append(colText);
+            out.append(col.text());
+            lineStartX.addAll(col.lineStartX());
+            lineTexts.addAll(col.lineTexts());
         }
-        return out.toString();
+        return new Assembled(out.toString(), lineStartX, lineTexts);
     }
 
     /**
@@ -389,14 +452,11 @@ public class PdfTextExtractorService {
      * Sans cette reconstitution, on perdrait toute trace des espacements larges
      * (typiques des tableaux), rendant {@link #looksLikeTable} inopérant.
      */
-    private void appendInterFragmentSpacing(StringBuilder out, Fragment prev, Fragment curr) {
+    private String interFragmentSpacing(Fragment prev, Fragment curr) {
         float gap = curr.xStart() - prev.xEnd();
-        if (gap <= SPACE_WIDTH_PT) {
-            out.append(' ');
-        } else {
-            int spaces = Math.clamp(Math.round(gap / SPACE_WIDTH_PT), 1, MAX_GAP_SPACES);
-            out.repeat(" ", spaces);
-        }
+        if (gap <= SPACE_WIDTH_PT) return " ";
+        int spaces = Math.clamp(Math.round(gap / SPACE_WIDTH_PT), 1, MAX_GAP_SPACES);
+        return " ".repeat(spaces);
     }
 
     // =========================================================================
