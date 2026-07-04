@@ -3,6 +3,7 @@ package com.sonny.parserag.controller;
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.pipeline.ParsePipelineService;
+import com.sonny.parserag.service.usage.UsageTrackingService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ParseController {
 
     private final ParsePipelineService parsePipelineService;
+    private final UsageTrackingService usageTrackingService;
 
     /**
      * Parse un fichier PDF et retourne des chunks structurés
@@ -46,6 +48,13 @@ public class ParseController {
         ApiKey apiKey = (ApiKey) request.getAttribute("apiKey");
         log.info("POST /api/v1/parse — '{}' ({} bytes)", file.getOriginalFilename(), file.getSize());
 
-        return ResponseEntity.ok(parsePipelineService.process(file, apiKey));
+        ParseResponse response = parsePipelineService.process(file, apiKey);
+
+        // Incrément du quota seulement sur parse réussi (les exceptions du pipeline propagent avant).
+        if (apiKey != null) {
+            usageTrackingService.recordSuccessfulParse(apiKey);
+        }
+
+        return ResponseEntity.ok(response);
     }
 }
