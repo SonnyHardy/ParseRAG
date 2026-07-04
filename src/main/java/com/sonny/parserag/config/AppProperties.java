@@ -83,6 +83,15 @@ public class AppProperties {
         @Positive private int starterMonthlyDocs;
         @Positive private int proMonthlyDocs;
         @Positive private int scaleMonthlyDocs;
+
+        public int forPlan(Plan plan) {
+            return switch (plan) {
+                case FREE    -> freeMonthlyDocs;
+                case STARTER -> starterMonthlyDocs;
+                case PRO     -> proMonthlyDocs;
+                case SCALE   -> scaleMonthlyDocs;
+            };
+        }
     }
 
     @Data
