@@ -2,6 +2,7 @@ package com.sonny.parserag.config;
 
 import com.sonny.parserag.filter.ApiKeyFilter;
 import com.sonny.parserag.filter.QuotaEnforcementFilter;
+import com.sonny.parserag.filter.RateLimitFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,6 +21,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    ApiKeyFilter apiKeyFilter,
+                                                   RateLimitFilter rateLimitFilter,
                                                    QuotaEnforcementFilter quotaEnforcementFilter) {
         http
                 .sessionManagement(session ->
@@ -27,8 +29,11 @@ public class SecurityConfig {
                 // Pas de CSRF : l'API est stateless, pas de session, pas de cookie.
                 .csrf(AbstractHttpConfigurer::disable)
                 .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
-                // Quota après ApiKeyFilter : a besoin de l'attribut apiKey qu'il pose.
-                .addFilterAfter(quotaEnforcementFilter, ApiKeyFilter.class)
+                // Rate limit après ApiKeyFilter : a besoin du plan (attribut apiKey). Check mémoire
+                // bon marché, placé avant le quota (check en base).
+                .addFilterAfter(rateLimitFilter, ApiKeyFilter.class)
+                // Quota après le rate limit : a besoin de l'attribut apiKey qu'ApiKeyFilter pose.
+                .addFilterAfter(quotaEnforcementFilter, RateLimitFilter.class)
                 .authorizeHttpRequests(auth ->
                         auth.anyRequest().permitAll());
 
@@ -43,6 +48,17 @@ public class SecurityConfig {
     @Bean
     public FilterRegistrationBean<ApiKeyFilter> apiKeyFilterRegistration(ApiKeyFilter filter) {
         FilterRegistrationBean<ApiKeyFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    /**
+     * Même traitement pour RateLimitFilter : injecté dans la chaîne Spring Security via
+     * addFilterAfter, on désactive son auto-registration servlet pour éviter une double exécution.
+     */
+    @Bean
+    public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
+        FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }
