@@ -75,6 +75,16 @@ public class AppProperties {
         @Positive private int starterRequestsPerMinute;
         @Positive private int proRequestsPerMinute;
         @Positive private int scaleRequestsPerMinute;
+
+        /** Débit autorisé (requêtes/minute) pour le plan donné — capacité du token bucket. */
+        public int forPlan(Plan plan) {
+            return switch (plan) {
+                case FREE    -> freeRequestsPerMinute;
+                case STARTER -> starterRequestsPerMinute;
+                case PRO     -> proRequestsPerMinute;
+                case SCALE   -> scaleRequestsPerMinute;
+            };
+        }
     }
 
     @Data
