@@ -143,7 +143,7 @@ public class TableExtractorService {
             return List.of();
         }
 
-        log.info("Table extraction — docId: {}, regions: {}, tables: {}, vision: {}",
+        log.debug("Table extraction — docId: {}, regions: {}, tables: {}, vision: {}",
                 doc.documentId(), regions.size(), results.size(), visionUsed);
         return results;
     }

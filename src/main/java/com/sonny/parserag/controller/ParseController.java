@@ -46,7 +46,7 @@ public class ParseController {
             HttpServletRequest request
     ) {
         ApiKey apiKey = (ApiKey) request.getAttribute("apiKey");
-        log.info("POST /api/v1/parse — '{}' ({} bytes)", file.getOriginalFilename(), file.getSize());
+        log.debug("POST /api/v1/parse — '{}' ({} bytes)", file.getOriginalFilename(), file.getSize());
 
         ParseResponse response = parsePipelineService.process(file, apiKey);
 

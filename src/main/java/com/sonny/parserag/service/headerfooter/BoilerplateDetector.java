@@ -75,7 +75,7 @@ class BoilerplateDetector implements HeaderFooterDetector {
             }
         }
 
-        log.info("HF[boilerplate] — docId: {}, confirmed: {} (strong: {}, zoned: {})",
+        log.debug("HF[boilerplate] — docId: {}, confirmed: {} (strong: {}, zoned: {})",
                 ctx.documentId(), confirmed.size(), strong, zoned);
         return confirmed;
     }

@@ -105,7 +105,7 @@ public class TableRegionDetector {
             log.warn("Table region detection skipped — cannot load PDF", e);
             return List.of();
         }
-        log.info("Table region detection — {} region(s) total", regions.size());
+        log.debug("Table region detection — {} region(s) total", regions.size());
         return regions;
     }
 

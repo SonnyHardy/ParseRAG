@@ -66,13 +66,13 @@ public class HeaderFooterCleaningService {
         }
 
         if (confirmed.isEmpty()) {
-            log.info("Header/footer cleaning — docId: {}, nothing confirmed across {} blocks",
+            log.debug("Header/footer cleaning — docId: {}, nothing confirmed across {} blocks",
                     doc.documentId(), blocks.size());
             return doc;
         }
 
         LineStripper.Result result = lineStripper.strip(doc, confirmed);
-        log.info("Header/footer cleaning complete — docId: {}, blocks confirmed: {}/{}, lines stripped: {}",
+        log.debug("Header/footer cleaning complete — docId: {}, blocks confirmed: {}/{}, lines stripped: {}",
                 doc.documentId(), confirmed.size(), blocks.size(), result.linesRemoved());
 
         return new ExtractedDocument(

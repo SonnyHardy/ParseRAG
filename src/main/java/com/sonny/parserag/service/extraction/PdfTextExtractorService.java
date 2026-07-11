@@ -114,12 +114,10 @@ public class PdfTextExtractorService {
 
             String documentId = "doc_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
-            log.info("Extraction complete — docId: {}, pages: {}, lang: {}", documentId, pageCount, detectedLanguage);
+            log.debug("Extraction complete — docId: {}, pages: {}, lang: {}", documentId, pageCount, detectedLanguage);
 
             return new ExtractedDocument(documentId, pageCount, detectedLanguage, title, pages);
 
-        } catch (ParseRagException e) {
-            throw e;
         } catch (IOException e) {
             log.error("Failed to extract PDF content", e);
             throw new ParseRagException(

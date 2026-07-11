@@ -54,7 +54,7 @@ class ClusterDetector implements HeaderFooterDetector {
             if (b.inEdgeZone(headerRatio, footerRatio)) candidates.add(b);
         }
         if (candidates.size() < cfg.getDbscanMinSamples()) {
-            log.info("HF[cluster] — docId: {}, skipped ({} candidates < {})",
+            log.debug("HF[cluster] — docId: {}, skipped ({} candidates < {})",
                     ctx.documentId(), candidates.size(), cfg.getDbscanMinSamples());
             return Set.of();
         }
@@ -71,7 +71,7 @@ class ClusterDetector implements HeaderFooterDetector {
                 new DBSCANClusterer<>(cfg.getDbscanEps(), cfg.getDbscanMinSamples());
         List<Cluster<DoublePoint>> clusters = dbscan.cluster(points);
         if (clusters.isEmpty()) {
-            log.info("HF[cluster] — docId: {}, no clusters formed", ctx.documentId());
+            log.debug("HF[cluster] — docId: {}, no clusters formed", ctx.documentId());
             return Set.of();
         }
 
@@ -93,7 +93,7 @@ class ClusterDetector implements HeaderFooterDetector {
             if (pages.size() >= 2) confirmed.addAll(members); // récurrent géométriquement
         }
 
-        log.info("HF[cluster] — docId: {}, clusters: {}, body size: {}, blocks confirmed: {}",
+        log.debug("HF[cluster] — docId: {}, clusters: {}, body size: {}, blocks confirmed: {}",
                 ctx.documentId(), clusters.size(), body.getPoints().size(), confirmed.size());
         return confirmed;
     }

@@ -41,7 +41,7 @@ public class ScannedPageDetector {
             if (isScanned(page)) out.add(page.pageNumber());
         }
         if (!out.isEmpty()) {
-            log.info("Scanned-page detection — docId: {}, scanned pages: {}", doc.documentId(), out);
+            log.debug("Scanned-page detection — docId: {}, scanned pages: {}", doc.documentId(), out);
         }
         return out;
     }

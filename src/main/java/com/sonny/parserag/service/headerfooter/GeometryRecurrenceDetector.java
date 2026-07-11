@@ -60,8 +60,8 @@ class GeometryRecurrenceDetector implements HeaderFooterDetector {
             if (!b.inEdgeZone(headerRatio, footerRatio)) continue;
             String key = TextNormalizer.recurrenceKey(b.text());
             if (key.isEmpty()) continue;
-            pagesByKey.computeIfAbsent(key, k -> new HashSet<>()).add(b.page());
-            blocksByKey.computeIfAbsent(key, k -> new ArrayList<>()).add(b);
+            pagesByKey.computeIfAbsent(key, _ -> new HashSet<>()).add(b.page());
+            blocksByKey.computeIfAbsent(key, _ -> new ArrayList<>()).add(b);
             sampleByKey.putIfAbsent(key, b.text());
         }
 
@@ -84,7 +84,7 @@ class GeometryRecurrenceDetector implements HeaderFooterDetector {
             keptKeys++;
         }
 
-        log.info("HF[geometry+recurrence] — docId: {}, threshold: {} pages, keys kept: {}, rejected: {}, blocks confirmed: {}",
+        log.debug("HF[geometry+recurrence] — docId: {}, threshold: {} pages, keys kept: {}, rejected: {}, blocks confirmed: {}",
                 ctx.documentId(), threshold, keptKeys, rejectedKeys, confirmed.size());
         return confirmed;
     }

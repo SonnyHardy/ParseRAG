@@ -34,7 +34,7 @@ public class ChunkingService {
             chunkPage(page, doc.documentId(), counter, chunks, maxChunkSize, overlap, minChunkSize);
         }
 
-        log.info("Chunking complete — docId: {}, chunks: {}", doc.documentId(), chunks.size());
+        log.debug("Chunking complete — docId: {}, chunks: {}", doc.documentId(), chunks.size());
         return chunks;
     }
 

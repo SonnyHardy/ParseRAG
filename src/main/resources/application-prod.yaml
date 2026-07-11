@@ -1,0 +1,20 @@
+# ── Profil PRODUCTION ─────────────────────────────────────────────────────────
+# Activé via SPRING_PROFILES_ACTIVE=prod. Surcharge application.yaml (le défaut =
+# environnement dev, verbeux). Objectif : ne garder que les logs pertinents afin
+# que les vrais WARN/ERROR ne soient plus noyés dans le bruit d'étape du pipeline.
+#
+# Rappel : les logs d'étape internes du pipeline (extraction, tables, header/footer,
+# chunking…) sont passés en DEBUG dans le code — en INFO ci-dessous ils disparaissent
+# donc de la prod, tandis qu'en dev (DEBUG) ils restent visibles.
+logging:
+  level:
+    root: INFO
+    com.sonny.parserag: INFO      # dev = DEBUG ; en prod on ne garde que les bords de requête + WARN/ERROR
+
+    # ── Librairies tierces bruyantes ─────────────────────────────────────────
+    # PDFBox/FontBox crachent des avertissements police/glyphe sur des PDF réels :
+    # bruit qui masque les vraies erreurs. On ne remonte que leurs ERROR.
+    org.apache.pdfbox: ERROR
+    org.apache.fontbox: ERROR
+    technology.tabula: WARN
+    org.hibernate.SQL: "OFF"      # verrou (show-sql est déjà false)

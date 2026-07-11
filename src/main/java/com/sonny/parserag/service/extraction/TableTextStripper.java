@@ -44,7 +44,7 @@ public class TableTextStripper {
         if (doc == null || regions == null || regions.isEmpty()) return doc;
 
         Map<Integer, List<TableRegion>> byPage = new HashMap<>();
-        for (TableRegion r : regions) byPage.computeIfAbsent(r.page(), k -> new ArrayList<>()).add(r);
+        for (TableRegion r : regions) byPage.computeIfAbsent(r.page(), _ -> new ArrayList<>()).add(r);
 
         Map<Integer, Set<String>> linesByPage = new HashMap<>();
         try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
@@ -70,7 +70,7 @@ public class TableTextStripper {
                     page.hasImages(), page.likelyHasTable(), page.reorderSuspectLines()));
         }
 
-        log.info("Table text stripping — docId: {}, lines removed: {}", doc.documentId(), removed);
+        log.debug("Table text stripping — docId: {}, lines removed: {}", doc.documentId(), removed);
         return new ExtractedDocument(doc.documentId(), doc.pageCount(),
                 doc.detectedLanguage(), doc.title(), cleaned);
     }
