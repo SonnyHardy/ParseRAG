@@ -49,6 +49,7 @@ import java.util.Set;
 public class ParsePipelineService {
 
     private static final String PDF_CONTENT_TYPE = "application/pdf";
+    private static final String OCTET_STREAM_CONTENT_TYPE = "application/octet-stream";
     private static final String PDF_MAGIC_BYTES  = "%PDF";
     private static final long   MAX_FILE_SIZE    = 50L * 1024 * 1024; // 50 MB
 
@@ -182,7 +183,8 @@ public class ParsePipelineService {
         }
 
         String contentType = file.getContentType();
-        if (contentType == null || !contentType.equalsIgnoreCase(PDF_CONTENT_TYPE)) {
+        if (contentType == null || !(contentType.equalsIgnoreCase(PDF_CONTENT_TYPE)
+                || contentType.equalsIgnoreCase(OCTET_STREAM_CONTENT_TYPE))) {
             throw new ParseRagException(
                     HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                     "INVALID_FILE_FORMAT",
