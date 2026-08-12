@@ -3,6 +3,7 @@ package com.sonny.parserag.config;
 import com.sonny.parserag.entity.Plan;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -19,6 +20,8 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "parserag")
 public class AppProperties {
 
+    private final Info                 info                 = new Info();
+    private final Health               health               = new Health();
     private final OpenAI               openai               = new OpenAI();
     private final Extraction           extraction           = new Extraction();
     private final Tables               tables               = new Tables();
@@ -29,6 +32,49 @@ public class AppProperties {
     private final Confidence           confidence           = new Confidence();
     private final PageLimits           pageLimits           = new PageLimits();
     private final HeaderFooterCleaning headerFooterCleaning = new HeaderFooterCleaning();
+
+    /**
+     * Identité de l'application, exposée par {@code GET /api/v1/health} (issue #37).
+     * <p>
+     * {@code version} est renseignée par le filtrage de ressources Maven ({@code @project.version@}
+     * dans application.yaml) : elle suit donc automatiquement la version du pom.
+     */
+    @Data
+    public static class Info {
+        private String name    = "ParseRAG";
+        private String version = "unknown";
+    }
+
+    /** Endpoint GET /api/v1/health (issue #37). */
+    @Data
+    public static class Health {
+        /**
+         * Borne (secondes) appliquée à <em>chaque</em> sonde qui passe par la base (ping
+         * {@code SELECT 1} et lecture de {@code flyway_schema_history}). Sans elle, une base
+         * injoignable ferait attendre le health check jusqu'au
+         * {@code spring.datasource.hikari.connection-timeout} — inexploitable par un monitoring.
+         * Au-delà de cette borne, la sonde concernée est déclarée {@code DOWN}.
+         */
+        @Positive
+        private int dbPingTimeoutSeconds = 3;
+
+        /**
+         * Chemin dont on surveille l'espace libre. Par défaut le répertoire de travail : sur un
+         * déploiement mono-volume c'est le même système de fichiers que le temp servlet où
+         * atterrissent les uploads. À pointer explicitement vers {@code java.io.tmpdir} si les
+         * deux vivent sur des volumes distincts.
+         */
+        @NotBlank
+        private String diskPath = ".";
+
+        /**
+         * Plancher d'espace libre (Mo) sous lequel {@code disk} passe {@code DOWN}. Un upload fait
+         * jusqu'à 50 Mo et PDFBox écrit des fichiers temporaires : bien en dessous de ce plancher,
+         * le parsing échouerait sur un disque plein plutôt que sur une erreur métier.
+         */
+        @Positive
+        private long minFreeDiskMb = 500;
+    }
 
     @Data
     public static class OpenAI {

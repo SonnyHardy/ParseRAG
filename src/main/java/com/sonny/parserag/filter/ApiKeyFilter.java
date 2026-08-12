@@ -7,9 +7,13 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionException;
 import org.springframework.web.filter.OncePerRequestFilter;
 import tools.jackson.databind.ObjectMapper;
 
@@ -20,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.Optional;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ApiKeyFilter extends OncePerRequestFilter {
@@ -31,26 +36,41 @@ public class ApiKeyFilter extends OncePerRequestFilter {
     private final ObjectMapper objectMapper;
 
     @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/api/v1/health");
-    }
-
-    @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
         String rawKey = request.getHeader(HEADER_NAME);
 
         if (rawKey == null || rawKey.isBlank()) {
-            writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "Missing X-API-Key header");
+            writeError(response, HttpStatus.UNAUTHORIZED, "MISSING_API_KEY", "Missing X-API-Key header");
             return;
         }
 
         String keyHash = sha256(rawKey);
-        Optional<ApiKey> apiKey = apiKeyRepository.findByKeyHashAndActiveTrue(keyHash);
+        Optional<ApiKey> apiKey;
+
+        try {
+            apiKey = apiKeyRepository.findByKeyHashAndActiveTrue(keyHash);
+        } catch (DataAccessException | TransactionException e) {
+            /*
+             * Base injoignable. Les deux familles d'exceptions sont nécessaires : le repository
+             * Spring Data est @Transactional(readOnly), donc l'échec survient le plus souvent à
+             * l'ouverture de la transaction (CannotCreateTransactionException, une
+             * TransactionException) et non sur la requête elle-même (DataAccessException).
+             *
+             * Sans ce catch, l'exception remonterait hors du DispatcherServlet : ni le
+             * GlobalExceptionHandler ni le 503 de HealthController ne la verraient, et le client
+             * recevrait la page /error par défaut de Spring Boot en 500. On rend donc ici le même
+             * 503 au format standard que celui qu'aurait produit le health check.
+             */
+            log.error("Lookup de la clé API impossible : base injoignable → 503", e);
+            writeError(response, HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
+                    "Database unavailable");
+            return;
+        }
 
         if (apiKey.isEmpty()) {
-            writeError(response, HttpServletResponse.SC_FORBIDDEN, "Invalid or inactive API key");
+            writeError(response, HttpStatus.FORBIDDEN, "INVALID_API_KEY", "Invalid or inactive API key");
             return;
         }
 
@@ -74,9 +94,20 @@ public class ApiKeyFilter extends OncePerRequestFilter {
         }
     }
 
-    private void writeError(HttpServletResponse response, int status, String message) throws IOException {
-        response.setStatus(status);
+    /**
+     * Un filtre s'exécute hors du DispatcherServlet : {@code GlobalExceptionHandler} n'y
+     * intercepterait pas d'exception. On écrit donc directement le JSON, au format standard
+     * {@code {error, message, status}} — le même que le handler global, RateLimitFilter et
+     * QuotaEnforcementFilter.
+     */
+    private void writeError(HttpServletResponse response, HttpStatus status,
+                            String errorCode, String message) throws IOException {
+        response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        objectMapper.writeValue(response.getWriter(), Map.of("error", message));
+        objectMapper.writeValue(response.getWriter(), Map.of(
+                "error", errorCode,
+                "message", message,
+                "status", status.value()
+        ));
     }
 }

@@ -16,7 +16,7 @@ spring:
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      connection-timeout: 60000
+      connection-timeout: 10000
       maximum-pool-size: 5
       idle-timeout: 300000
   jpa:
@@ -43,6 +43,17 @@ logging:
 
 # ── ParseRAG properties (AppProperties.java) ───────────────────
 parserag:
+  # Identité exposée par GET /api/v1/health. @project.version@ est substituée au build par le
+  # filtrage de ressources Maven (configuré par spring-boot-starter-parent).
+  info:
+    name: ${spring.application.name}
+    version: '@project.version@'
+
+  health:
+    db-ping-timeout-seconds: 3   # borne chaque sonde base (ping + lecture flyway_schema_history) : sans elle, une base down ferait attendre le connection-timeout Hikari (10 s)
+    disk-path: '.'               # volume surveillé ; à pointer sur java.io.tmpdir si les uploads atterrissent sur un autre disque
+    min-free-disk-mb: 500        # sous ce plancher → disk DOWN (un upload = jusqu'à 50 Mo + temporaires PDFBox)
+
   openai:
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini

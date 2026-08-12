@@ -34,7 +34,10 @@ start a DB connection without them): `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_U
 Postgres must be reachable. Flyway runs migrations from `src/main/resources/db/migration` on
 startup (`baseline-on-migrate: true`, `ddl-auto: none` — schema is owned by Flyway, never Hibernate).
 `V1__create_api_keys_table.sql` seeds a dev key: the raw key is `test-key-dev-123` (its SHA-256 is
-what's stored). Pass it as `X-API-Key: test-key-dev-123`.
+what's stored). Pass it as `X-API-Key: test-key-dev-123`. That key is also the **admin** key
+(`V3__add_admin_to_api_keys.sql`) — the only one allowed on `/api/v1/health`. Note V1's stored hash
+was actually SHA-256 of `123`, not of the documented key; V3 corrects it in place (V1 itself is left
+untouched — editing an applied migration breaks Flyway checksum validation).
 
 ## Request flow
 
@@ -63,9 +66,49 @@ switch rather than branching on the enum at call sites.
 `ApiKeyFilter`, inserted into the Spring Security chain via `addFilterBefore`. Note the
 `FilterRegistrationBean` with `setEnabled(false)`: it deliberately disables Spring Boot's automatic
 servlet registration so the filter does not run twice. Any new `OncePerRequestFilter` that should live
-only in the security chain needs the same treatment. `ApiKeyFilter` skips `/api/v1/health` and hashes
-the incoming key with SHA-256 before lookup. `RateLimitFilter` and `QuotaEnforcementFilter` are
-currently pass-through stubs.
+only in the security chain needs the same treatment. `ApiKeyFilter` hashes the incoming key with
+SHA-256 before lookup and filters **every** request — there is no exempt path, `/api/v1/health`
+included (issue #37). Because that lookup is a DB read, the filter catches `DataAccessException`
+**and** `TransactionException` around it and writes a `503 DATABASE_UNAVAILABLE` itself: Spring
+Data's repository is `@Transactional`, so a down Postgres usually surfaces as
+`CannotCreateTransactionException`, which is *not* a `DataAccessException`. Without that catch the
+exception escapes the DispatcherServlet and the client gets Spring Boot's default `/error` 500 —
+including on `/api/v1/health`, whose own `503` is never reached since the controller never runs.
+`RateLimitFilter` (token bucket per key, issue #14) and `QuotaEnforcementFilter` (monthly quota,
+only on `POST /api/v1/parse`, issue #13) run after it and both read the `apiKey` attribute.
+
+All three filters, plus `GlobalExceptionHandler`, render errors in one shape:
+`{"error": "<CODE>", "message": "…", "status": <int>}`. A filter runs outside the DispatcherServlet,
+so it writes that JSON itself rather than throwing.
+
+### Admin-only endpoints
+
+`ApiKey.admin` (boolean, default `false`) gates endpoints reserved for the developer. Today only
+`GET /api/v1/health` uses it: `HealthController` reads the `apiKey` attribute and throws
+`ParseRagException(NOT_FOUND, "NOT_FOUND", "Endpoint not found")` when the key isn't admin — a
+deliberate `404`, not the `403` issue #37 asked for: a `403` would confirm to any legitimate
+key-holder that an admin endpoint exists there. For non-admins the endpoint simply doesn't exist.
+The check sits in the controller, not a filter — one endpoint doesn't justify a fourth filter, and
+going through `ParseRagException` reuses the standard error rendering.
+
+`HealthService` probes only what the app **cannot** guarantee about itself; a self-check run by the
+app is a tautology (if it answers, it's alive), which is why there is no "application" component and
+why heap/memory is deliberately absent — memory is a sawtooth metric, not a binary state, and a
+threshold on it would report `DOWN` on a healthy JVM while missing the real OOM. Three components,
+all reported flat as `UP`/`DOWN`:
+
+- `db` — `SELECT 1`.
+- `flyway` — `flyway.info()`; `DOWN` on any pending or failed migration, i.e. "is this jar running
+  on the schema it expects?", a question `SELECT 1` doesn't ask. Skipped (reported `DOWN` outright)
+  when `db` is already `DOWN`, since it needs the same connection.
+- `disk` — free space on `parserag.health.disk-path` against `parserag.health.min-free-disk-mb`.
+  A real binary state: uploads reach 50 MB and PDFBox spills to temp files.
+
+`status` is the conjunction: `200` when all three are `UP`, `503` otherwise (same body, the faulty
+component carrying `DOWN`). Both DB-backed probes run on a single daemon thread bounded by
+`parserag.health.db-ping-timeout-seconds`, so a hung Postgres can't make the check wait out Hikari's
+`connection-timeout` (10 s, sized for parsing rather than for a health probe). The `Flyway` bean is injected through `ObjectProvider` — it's absent when
+`spring.flyway.enabled=false`, in which case `flyway` reports `UP` (nothing to verify).
 
 ## Key architectural detail: header/footer cleaning
 
@@ -111,8 +154,10 @@ pages (mitigated by the index guard, may need tuning).
   in the relevant service.
 - The codebase is built sprint by sprint. Several features are stubbed or disabled on purpose:
   `looksLikeTable` always returns `false` (table extraction deferred to issue #9), chunk confidence
-  is hardcoded to `1.0` (issue #8), and the rate-limit/quota filters are no-ops. `TableDetectorService`,
-  `TableExtractorService`, `VisionFallbackService`, `ConfidenceCalculatorService`,
-  `UsageTrackingService`, and the OpenAI config exist for upcoming sprints — don't assume they're live.
-- Only `ParseRagApplicationTests.contextLoads` exists today; `@SpringBootTest` needs a working
-  datasource, so the context-load test requires the env vars above.
+  is hardcoded to `1.0` (issue #8). `TableDetectorService`, `TableExtractorService`,
+  `VisionFallbackService`, and `ConfidenceCalculatorService` exist for upcoming sprints — don't assume
+  they're live. The rate-limit and quota filters, by contrast, are no longer stubs (issues #14/#13).
+- **Tests are plain unit tests** (JUnit 5 + Mockito + `spring-test` mocks), no Spring context —
+  collaborators are mocked and web plumbing uses `MockHttpServletRequest`/`MockFilterChain`. Keep new
+  tests in that style. The one exception is `ParseRagApplicationTests.contextLoads`: `@SpringBootTest`
+  needs a working datasource, so it requires the env vars above.

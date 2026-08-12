@@ -27,6 +27,13 @@ public class ApiKey {
 
     private boolean active = true;
 
+    /**
+     * Clé administrateur (développeur). Seule une clé {@code admin} peut appeler les endpoints
+     * réservés — aujourd'hui {@code GET /api/v1/health} (issue #37).
+     */
+    @Column(nullable = false)
+    private boolean admin = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }
