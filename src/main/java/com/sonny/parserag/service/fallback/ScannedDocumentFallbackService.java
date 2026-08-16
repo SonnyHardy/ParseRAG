@@ -86,12 +86,23 @@ public class ScannedDocumentFallbackService {
                     }
                 }
                 if (res != null) {
-                    budget.tryConsume();
-                    pagesDone++;
-                    if (!res.text().isBlank()) {
-                        textChunks.addAll(chunkVisionText(doc.documentId(), page, res.text()));
+                    budget.tryConsume();   // l'appel a eu lieu : il compte, quel qu'en soit le rendu
+
+                    List<Chunk> pageChunks = res.text().isBlank()
+                            ? List.of()
+                            : chunkVisionText(doc.documentId(), page, res.text());
+
+                    // Un texte plus court que min-chunk-size (légende d'une figure, par ex.) est
+                    // filtré par le chunking : sans ce garde-fou la page ne ressortirait nulle part,
+                    // ni en contenu ni en revue — elle disparaîtrait silencieusement de la réponse.
+                    if (pageChunks.isEmpty() && res.tables().isEmpty()) {
+                        textChunks.add(manualReviewChunk(page));
+                        pagesFlagged++;
+                    } else {
+                        textChunks.addAll(pageChunks);
+                        tables.addAll(res.tables());
+                        pagesDone++;
                     }
-                    tables.addAll(res.tables());
                 } else {
                     // Sur-budget, échec, ou page sans contenu exploitable → revue manuelle.
                     textChunks.add(manualReviewChunk(page));
