@@ -95,11 +95,21 @@ public class AppProperties {
          */
         private String apiKey;
         /**
-         * Tag stable, jamais une variante {@code -preview-*} : la {@code preview-09-2025} de
-         * Flash-Lite a déjà été coupée, et un modèle qui disparaît fait basculer tout un document
-         * en revue manuelle.
+         * Tag stable, jamais une variante {@code -preview-*} ni un alias mouvant
+         * ({@code gemini-flash-lite-latest}) : un modèle qui change ou disparaît fait basculer tout
+         * un document en revue manuelle. {@code gemini-2.5-flash-lite}, visé à l'ouverture de
+         * l'issue #28, est refusé (404) aux comptes récents — d'où le Flash-Lite courant.
          */
-        private String model = "gemini-2.5-flash-lite";
+        private String model = "gemini-3.5-flash-lite";
+        /**
+         * Effort de raisonnement : {@code minimal} (défaut), {@code low}, {@code medium},
+         * {@code high}. La tâche est de la transcription structurée, pas du calcul — à ne relever
+         * que si la qualité d'extraction le justifie, au prix de la latence et des tokens.
+         * <p>Remplace le {@code thinkingBudget} de l'ère Gemini 2.5, que les modèles 3.x rejettent
+         * (400 INVALID_ARGUMENT).
+         */
+        @NotBlank
+        private String thinkingLevel = "minimal";
         /** Tentatives du SDK sur 429 (rate-limit) / 5xx, avec backoff exponentiel. */
         @Min(0)
         private int maxRetries = 4;

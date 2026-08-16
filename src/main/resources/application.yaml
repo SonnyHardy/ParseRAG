@@ -56,7 +56,8 @@ parserag:
 
   gemini:
     api-key: ${GOOGLE_API_KEY:}    # vide par défaut en dev (GEMINI_API_KEY est le nom legacy du SDK, non utilisé)
-    model: gemini-2.5-flash-lite   # tag stable — surtout pas une variante -preview-* (celle de 09-2025 est déjà coupée)
+    model: gemini-3.5-flash-lite   # tag stable — ni -preview-*, ni alias mouvant (-latest) ; 2.5-flash-lite est refusé (404) aux comptes récents
+    thinking-level: minimal        # minimal|low|medium|high — transcription structurée, pas de calcul (remplace le thinking-budget de l'ère 2.5)
     max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
     timeout-ms: 60000              # budget par appel (millisecondes : unité de HttpOptions)
 

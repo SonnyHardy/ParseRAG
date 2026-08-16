@@ -68,7 +68,8 @@ class VisionProviderBenchmark {
 
     /** Relevé d'un passage sur une fixture. */
     private record Run(int scannedPages, Set<Integer> visionPages, Set<Integer> reviewPages,
-                       int textChunks, int tables, long millis) {
+                       int textChunks, int tables, long millis,
+                       List<Chunk> chunks, List<TableResult> extracted) {
     }
 
     private final String provider = env("VISION_PROVIDER", "gemini");
@@ -127,7 +128,8 @@ class VisionProviderBenchmark {
         reviewPages.removeAll(visionPages);
 
         return new Run(scanned.size(), visionPages, reviewPages,
-                res.textChunks().size(), res.tables().size(), millis);
+                res.textChunks().size(), res.tables().size(), millis,
+                res.textChunks(), res.tables());
     }
 
     // ── Rapport ───────────────────────────────────────────────────────────────────────────
@@ -167,7 +169,33 @@ class VisionProviderBenchmark {
         md.append("\n**Set identique sur les %d runs : %s** · **toutes les pages en vision : %s**\n"
                 .formatted(longRuns.size(), stable ? "OUI" : "NON", complete ? "OUI" : "NON"));
         md.append("\n> Critère d'acceptation #28 : les deux doivent être OUI.\n");
+
+        // Extraits : le nombre de chunks ne dit rien de la fidélité. Le rapport OpenAI jugeait sur le
+        // contenu (texte verbatim, grille exacte, ordre de lecture) — on donne de quoi refaire ce jugement.
+        md.append("\n## Extraits (1ᵉʳ run)\n");
+        runs.forEach((fixture, list) -> {
+            Run r = list.getFirst();
+            md.append("\n### %s\n\n".formatted(fixture.replace(".pdf", "")));
+            if (r.chunks().isEmpty() && r.extracted().isEmpty()) {
+                md.append("_(aucune sortie — la page n'apparaît nulle part dans la réponse)_\n");
+            }
+            for (Chunk c : r.chunks()) {
+                md.append("- p%d%s : `%s`\n".formatted(c.page(),
+                        c.manualReviewNeeded() ? " **[manual review]**" : "", excerpt(c.text())));
+            }
+            for (TableResult t : r.extracted()) {
+                md.append("- p%d table %dx%d — en-têtes `%s`, 1ʳᵉ ligne `%s`\n".formatted(
+                        t.page(), t.rowCount(), t.colCount(), t.headers(),
+                        t.rows().isEmpty() ? "—" : t.rows().getFirst()));
+            }
+        });
         return md.toString();
+    }
+
+    /** Première ligne, tronquée : de quoi juger la fidélité sans noyer le rapport. */
+    private static String excerpt(String text) {
+        String flat = text.replaceAll("\\s+", " ").strip();
+        return flat.length() <= 140 ? flat : flat.substring(0, 140) + "…";
     }
 
     // ── Câblage ───────────────────────────────────────────────────────────────────────────
@@ -191,6 +219,7 @@ class VisionProviderBenchmark {
         // Cap volontairement au-dessus des 25 pages du doc long : on mesure l'API, pas le budget.
         p.getVision().setMaxPagesPerDocument(30);
         p.getGemini().setApiKey(env("GOOGLE_API_KEY", dotenv("GOOGLE_API_KEY")));
+        p.getGemini().setModel(env("GEMINI_MODEL", p.getGemini().getModel()));
         p.getOpenai().setApiKey(env("OPENAI_API_KEY", dotenv("OPENAI_API_KEY")));
         p.getOpenai().setModel("gpt-4o-mini");
 

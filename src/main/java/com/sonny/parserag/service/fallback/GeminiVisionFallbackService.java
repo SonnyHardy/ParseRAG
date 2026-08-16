@@ -23,8 +23,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Fallback vision sur <strong>Gemini 2.5 Flash-Lite</strong> (issue #28) — implémentation par défaut
- * du port {@link VisionFallback}.
+ * Fallback vision sur <strong>Gemini Flash-Lite</strong> (issue #28) — implémentation par défaut du
+ * port {@link VisionFallback}. Le modèle exact est configurable
+ * ({@code parserag.gemini.model}) : l'issue visait {@code gemini-2.5-flash-lite}, que l'API refuse
+ * désormais aux comptes récents (404), d'où le Flash-Lite courant.
  *
  * <p><strong>Pourquoi ce fournisseur.</strong> La validation Phase 4 (#11) a montré que le facteur
  * limitant du fallback n'était pas notre code mais le plafond RPM/TPM du compte OpenAI, partagé par
@@ -34,9 +36,9 @@ import java.util.Map;
  *
  * <p><strong>Sortie contrainte.</strong> Chaque appel passe un {@code responseSchema} (structured
  * outputs) : la forme du JSON est garantie par l'API plutôt que seulement demandée en prose. Le
- * {@link VisionResponseParser} reste derrière en filet de sécurité. Le mode « thinking » est
- * explicitement désactivé ({@code thinkingBudget = 0}) : pour de l'OCR structuré il n'apporte rien
- * et coûte latence et tokens.
+ * {@link VisionResponseParser} reste derrière en filet de sécurité. Le mode « thinking » est réduit
+ * au minimum ({@code parserag.gemini.thinking-level}) : pour de l'OCR structuré il n'apporte rien et
+ * coûte latence et tokens.
  *
  * <p><strong>Dégradation gracieuse</strong> (contrat du port) : vision désactivée ou clé absente
  * (cas dev, {@code GOOGLE_API_KEY} vide) → {@link #isAvailable()} faux et aucun client n'est bâti ;
@@ -175,8 +177,10 @@ public class GeminiVisionFallbackService implements VisionFallback {
                 .temperature(0f)
                 .responseMimeType("application/json")
                 .responseSchema(schema)
-                // Pas de raisonnement : la tâche est de la transcription structurée, pas du calcul.
-                .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0))
+                // Raisonnement au minimum : la tâche est de la transcription structurée, pas du
+                // calcul. thinkingLevel (Gemini 3.x) et non thinkingBudget (2.5), rejeté en 400.
+                .thinkingConfig(ThinkingConfig.builder()
+                        .thinkingLevel(appProperties.getGemini().getThinkingLevel()))
                 .build();
 
         Content content = Content.fromParts(Part.fromText(userPrompt), Part.fromBytes(png, PNG_MIME));
