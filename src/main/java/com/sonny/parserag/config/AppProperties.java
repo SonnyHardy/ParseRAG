@@ -23,6 +23,7 @@ public class AppProperties {
     private final Info                 info                 = new Info();
     private final Health               health               = new Health();
     private final OpenAI               openai               = new OpenAI();
+    private final Gemini               gemini               = new Gemini();
     private final Extraction           extraction           = new Extraction();
     private final Tables               tables               = new Tables();
     private final Vision               vision               = new Vision();
@@ -85,6 +86,38 @@ public class AppProperties {
         private int maxRetries = 4;
     }
 
+    /** Fallback vision par défaut depuis l'issue #28 (Gemini 2.5 Flash-Lite). */
+    @Data
+    public static class Gemini {
+        /**
+         * {@code GOOGLE_API_KEY} — nom lu par défaut par le SDK Google Gen AI.
+         * ({@code GEMINI_API_KEY} est le nom <em>legacy</em> : on ne l'utilise pas.)
+         */
+        private String apiKey;
+        /**
+         * Tag stable, jamais une variante {@code -preview-*} ni un alias mouvant
+         * ({@code gemini-flash-lite-latest}) : un modèle qui change ou disparaît fait basculer tout
+         * un document en revue manuelle. {@code gemini-2.5-flash-lite}, visé à l'ouverture de
+         * l'issue #28, est refusé (404) aux comptes récents — d'où le Flash-Lite courant.
+         */
+        private String model = "gemini-3.5-flash-lite";
+        /**
+         * Effort de raisonnement : {@code minimal} (défaut), {@code low}, {@code medium},
+         * {@code high}. La tâche est de la transcription structurée, pas du calcul — à ne relever
+         * que si la qualité d'extraction le justifie, au prix de la latence et des tokens.
+         * <p>Remplace le {@code thinkingBudget} de l'ère Gemini 2.5, que les modèles 3.x rejettent
+         * (400 INVALID_ARGUMENT).
+         */
+        @NotBlank
+        private String thinkingLevel = "minimal";
+        /** Tentatives du SDK sur 429 (rate-limit) / 5xx, avec backoff exponentiel. */
+        @Min(0)
+        private int maxRetries = 4;
+        /** Budget par appel, en <strong>millisecondes</strong> (unité attendue par {@code HttpOptions}). */
+        @Positive
+        private int timeoutMs = 60_000;
+    }
+
     @Data
     public static class Extraction {
         /** Retire les colonnes de numéros de ligne en marge (copies de relecture/soumission). */
@@ -106,6 +139,13 @@ public class AppProperties {
     @Data
     public static class Vision {
         private boolean enabled;
+        /**
+         * Fournisseur du fallback vision : {@code gemini} (défaut) ou {@code openai}. Sélectionne
+         * l'implémentation du port {@code VisionFallback} par {@code @ConditionalOnProperty} —
+         * exactement un bean au démarrage.
+         */
+        @NotBlank
+        private String  provider = "gemini";
         @Min(0) @Max(1)
         private double  confidenceThreshold;
         /** Sous ce score de qualité sémantique d'une grille Tabula borderless, on bascule sur la vision. */

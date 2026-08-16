@@ -29,7 +29,12 @@ Java 25 toolchain, Spring Boot 4.0.6. Lombok is an annotation processor (configu
 
 `application.yaml` imports an optional `.env` and reads these vars (no safe defaults — the app won't
 start a DB connection without them): `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
-`POSTGRES_PASSWORD`. Optional: `SERVER_PORT` (default 8080), `OPENAI_API_KEY` (empty in dev).
+`POSTGRES_PASSWORD`. Optional: `SERVER_PORT` (default 8080), `GOOGLE_API_KEY` (vision fallback,
+empty in dev), `OPENAI_API_KEY` (only for the legacy vision provider, empty in dev).
+
+`GOOGLE_API_KEY` is the name the Google Gen AI SDK reads by default; `GEMINI_API_KEY` is its *legacy*
+alias and is not used here. With no key, `VisionFallback.isAvailable()` is false, no SDK client is
+ever built, and scanned pages degrade to `manual_review_needed` — the app runs fine without one.
 
 Postgres must be reachable. Flyway runs migrations from `src/main/resources/db/migration` on
 startup (`baseline-on-migrate: true`, `ddl-auto: none` — schema is owned by Flyway, never Hibernate).
@@ -110,6 +115,42 @@ component carrying `DOWN`). Both DB-backed probes run on a single daemon thread 
 `connection-timeout` (10 s, sized for parsing rather than for a health probe). The `Flyway` bean is injected through `ObjectProvider` — it's absent when
 `spring.flyway.enabled=false`, in which case `flyway` reports `UP` (nothing to verify).
 
+## Vision fallback (package `service.fallback`)
+
+Two consumers reach for a vision model when PDFBox/Tabula can't do the job: borderless tables whose
+Tabula grid scores poorly (`TableExtractorService`, issue #9) and scanned/image-only pages
+(`ScannedDocumentFallbackService`, issue #11). Both depend on the **port** `VisionFallback`
+(`isAvailable` / `extractTable` / `extractPage`), never on a concrete provider.
+
+Its contract is **graceful degradation, no exceptions**: vision disabled, key missing, call failed or
+response unusable all return `null`, and the caller turns that into `manual_review_needed`. Every
+implementation must honour it — the pipeline has no other safety net.
+
+Two implementations, selected by `parserag.vision.provider` via `@ConditionalOnProperty` (exactly one
+bean at startup, so a typo surfaces as `NoSuchBeanDefinitionException` rather than silent fallthrough):
+
+- **`GeminiVisionFallbackService`** (`gemini`, **default**) — Gemini 2.5 Flash-Lite via the official
+  `com.google.genai:google-genai` SDK. Passes a `responseSchema` (structured outputs) so the JSON
+  shape is enforced by the API, and sets `thinkingBudget = 0` (transcription, not reasoning).
+- **`OpenAiVisionFallbackService`** (`openai`) — the historical GPT-4o mini path, kept only to compare
+  extraction quality on the same corpus before being deleted (issue #28).
+
+Why the switch: Phase 4 of #11 showed the binding constraint was the **account-wide OpenAI RPM/TPM
+ceiling**, not our code — a 25-page scan got 9 then 12 pages through, with a *different* set of pages
+each run, while the `VisionBudget` cap (20/doc) never even engaged. See
+`src/test/resources/sample-pdfs/results/PHASE4-scanned-vision-2026-06-26.md`.
+
+Shared, provider-independent pieces: `VisionResponseParser` (JSON → domain: tolerates Markdown fences,
+rectangularizes ragged rows **by padding only** — never truncates — and rejects grids under 2 columns)
+and `VisionPrompts` (the prompts themselves, so tuning one doesn't silently apply to a single provider
+and skew the comparison). `VisionBudget` caps vision pages per *document* and is shared by both
+consumers — it is orthogonal to the provider.
+
+**Adding a provider**: implement `VisionFallback`, reuse `VisionResponseParser` and `VisionPrompts`,
+annotate with `@ConditionalOnProperty(... havingValue = "<name>")`. Do not mock the vendor SDK client
+in tests — both SDKs expose `final` classes (and `com.google.genai.Client.models` is a public field,
+so a Mockito mock leaves it null); inject a small functional seam instead, as `GeminiCall` does.
+
 ## Key architectural detail: header/footer cleaning
 
 Lives entirely in the package `com.sonny.parserag.service.headerfooter`, designed as **stacked
@@ -154,9 +195,9 @@ pages (mitigated by the index guard, may need tuning).
   in the relevant service.
 - The codebase is built sprint by sprint. Several features are stubbed or disabled on purpose:
   `looksLikeTable` always returns `false` (table extraction deferred to issue #9), chunk confidence
-  is hardcoded to `1.0` (issue #8). `TableDetectorService`, `TableExtractorService`,
-  `VisionFallbackService`, and `ConfidenceCalculatorService` exist for upcoming sprints — don't assume
-  they're live. The rate-limit and quota filters, by contrast, are no longer stubs (issues #14/#13).
+  is hardcoded to `1.0` (issue #8). `TableDetectorService` and `ConfidenceCalculatorService` exist for
+  upcoming sprints — don't assume they're live. The rate-limit and quota filters, by contrast, are no
+  longer stubs (issues #14/#13), and neither is the vision fallback (see below).
 - **Tests are plain unit tests** (JUnit 5 + Mockito + `spring-test` mocks), no Spring context —
   collaborators are mocked and web plumbing uses `MockHttpServletRequest`/`MockFilterChain`. Keep new
   tests in that style. The one exception is `ParseRagApplicationTests.contextLoads`: `@SpringBootTest`

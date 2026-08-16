@@ -25,7 +25,7 @@ import java.util.Set;
 /**
  * Fallback vision <strong>plein-page</strong> pour les pages scannées / image-only (issue #11).
  * Pour chaque page repérée par {@code ScannedPageDetector}, rend la page entière en PNG, délègue à
- * {@link VisionFallbackService#extractPage} (texte + tableaux), puis mappe le résultat en chunks :
+ * {@link VisionFallback#extractPage} (texte + tableaux), puis mappe le résultat en chunks :
  * le texte est redécoupé via {@link ChunkingService} (dimensionnement RAG cohérent) en chunks
  * {@link ChunkType#PARAGRAPH}, les tableaux ressortent en {@link TableResult} (rendus en chunks
  * {@code TABLE} par le pipeline, comme les tableaux natifs).
@@ -45,7 +45,7 @@ public class ScannedDocumentFallbackService {
     /** Confiance d'une page scannée non traitée (sur-budget / vision indisponible), à revoir manuellement. */
     private static final double MANUAL_REVIEW_CONFIDENCE = 0.3;
 
-    private final VisionFallbackService visionFallbackService;
+    private final VisionFallback visionFallback;
     private final ChunkingService chunkingService;
 
     /** Chunks de texte + tableaux issus du fallback vision des pages scannées. */
@@ -65,7 +65,7 @@ public class ScannedDocumentFallbackService {
         List<TableResult> tables = new ArrayList<>();
 
         // Vision indisponible (désactivée / pas de clé) : aucune page ne peut être lue → toutes en revue.
-        if (!visionFallbackService.isAvailable()) {
+        if (!visionFallback.isAvailable()) {
             for (int page : scannedPages) textChunks.add(manualReviewChunk(page));
             log.info("Scanned fallback — docId: {}, vision unavailable → {} page(s) flagged for manual review",
                     doc.documentId(), scannedPages.size());
@@ -79,19 +79,30 @@ public class ScannedDocumentFallbackService {
                 VisionPageResult res = null;
                 if (budget.hasRemaining()) {
                     try {
-                        res = visionFallbackService.extractPage(renderFullPage(renderer, page), page);
+                        res = visionFallback.extractPage(renderFullPage(renderer, page), page);
                     } catch (Exception e) {
                         log.warn("Scanned fallback failed on page {} (docId {}): {}",
                                 page, doc.documentId(), e.toString());
                     }
                 }
                 if (res != null) {
-                    budget.tryConsume();
-                    pagesDone++;
-                    if (!res.text().isBlank()) {
-                        textChunks.addAll(chunkVisionText(doc.documentId(), page, res.text()));
+                    budget.tryConsume();   // l'appel a eu lieu : il compte, quel qu'en soit le rendu
+
+                    List<Chunk> pageChunks = res.text().isBlank()
+                            ? List.of()
+                            : chunkVisionText(doc.documentId(), page, res.text());
+
+                    // Un texte plus court que min-chunk-size (légende d'une figure, par ex.) est
+                    // filtré par le chunking : sans ce garde-fou la page ne ressortirait nulle part,
+                    // ni en contenu ni en revue — elle disparaîtrait silencieusement de la réponse.
+                    if (pageChunks.isEmpty() && res.tables().isEmpty()) {
+                        textChunks.add(manualReviewChunk(page));
+                        pagesFlagged++;
+                    } else {
+                        textChunks.addAll(pageChunks);
+                        tables.addAll(res.tables());
+                        pagesDone++;
                     }
-                    tables.addAll(res.tables());
                 } else {
                     // Sur-budget, échec, ou page sans contenu exploitable → revue manuelle.
                     textChunks.add(manualReviewChunk(page));

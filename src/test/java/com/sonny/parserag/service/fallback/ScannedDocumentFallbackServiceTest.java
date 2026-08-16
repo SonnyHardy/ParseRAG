@@ -1,6 +1,5 @@
 package com.sonny.parserag.service.fallback;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ChunkType;
@@ -30,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Teste le mapping du fallback vision plein-page → chunks, sur un PDF image-only synthétisé,
- * avec une {@link VisionFallbackService} factice (aucun appel réseau).
+ * avec un {@link VisionFallback} factice (aucun appel réseau).
  */
 class ScannedDocumentFallbackServiceTest {
 
@@ -44,11 +43,16 @@ class ScannedDocumentFallbackServiceTest {
     }
 
     /** Vision factice : disponibilité paramétrable, renvoie texte + un tableau pour toute page. */
-    private static VisionFallbackService stubVision(AppProperties p, boolean available) {
-        return new VisionFallbackService(p, new ObjectMapper()) {
+    private static VisionFallback stubVision(boolean available) {
+        return new VisionFallback() {
             @Override
             public boolean isAvailable() {
                 return available;
+            }
+
+            @Override
+            public TableResult extractTable(byte[] png, int page, String caption) {
+                return null;   // non sollicité par ce chemin
             }
 
             @Override
@@ -61,8 +65,28 @@ class ScannedDocumentFallbackServiceTest {
         };
     }
 
+    /** Vision factice renvoyant un résultat imposé, quelle que soit la page. */
+    private static VisionFallback stubVision(VisionPageResult fixed) {
+        return new VisionFallback() {
+            @Override
+            public boolean isAvailable() {
+                return true;
+            }
+
+            @Override
+            public TableResult extractTable(byte[] png, int page, String caption) {
+                return null;
+            }
+
+            @Override
+            public VisionPageResult extractPage(byte[] png, int page) {
+                return fixed;
+            }
+        };
+    }
+
     private static ScannedDocumentFallbackService service(AppProperties p, boolean available) {
-        return new ScannedDocumentFallbackService(stubVision(p, available),
+        return new ScannedDocumentFallbackService(stubVision(available),
                 new ChunkingService(p, new ConfidenceCalculatorService(p)));
     }
 
@@ -124,6 +148,22 @@ class ScannedDocumentFallbackServiceTest {
         assertEquals(1, review, "1 page sur-budget → revue manuelle");
         assertTrue(res.textChunks().stream().filter(Chunk::manualReviewNeeded)
                 .allMatch(c -> c.confidence() == 0.3 && !c.fallbackUsed()));
+    }
+
+    @Test
+    void visionPageWithNothingUsableFallsBackToManualReview() throws Exception {
+        // Page « figure seule » : le modèle ne rend qu'une légende, plus courte que min-chunk-size,
+        // donc filtrée par le chunking. Sans garde-fou la page disparaîtrait de la réponse.
+        AppProperties p = props();
+        ScannedDocumentFallbackService s = new ScannedDocumentFallbackService(
+                stubVision(new VisionPageResult(1, "Figure 1.", List.of())),
+                new ChunkingService(p, new ConfidenceCalculatorService(p)));
+
+        ScannedExtraction res =
+                s.process(imageOnlyPdf(1), doc("d1", 1), Set.of(1), new VisionBudget(20));
+
+        assertEquals(1, res.textChunks().size(), "la page doit ressortir, jamais s'évaporer");
+        assertTrue(res.textChunks().getFirst().manualReviewNeeded(), "signalée pour revue manuelle");
     }
 
     @Test

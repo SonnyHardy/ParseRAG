@@ -54,7 +54,14 @@ parserag:
     disk-path: '.'               # volume surveillé ; à pointer sur java.io.tmpdir si les uploads atterrissent sur un autre disque
     min-free-disk-mb: 500        # sous ce plancher → disk DOWN (un upload = jusqu'à 50 Mo + temporaires PDFBox)
 
-  openai:
+  gemini:
+    api-key: ${GOOGLE_API_KEY:}    # vide par défaut en dev (GEMINI_API_KEY est le nom legacy du SDK, non utilisé)
+    model: gemini-3.5-flash-lite   # tag stable — ni -preview-*, ni alias mouvant (-latest) ; 2.5-flash-lite est refusé (404) aux comptes récents
+    thinking-level: minimal        # minimal|low|medium|high — transcription structurée, pas de calcul (remplace le thinking-budget de l'ère 2.5)
+    max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
+    timeout-ms: 60000              # budget par appel (millisecondes : unité de HttpOptions)
+
+  openai:                          # provider historique, conservé pour comparaison (issue #28)
     api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
     model: gpt-4o-mini
     max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
@@ -71,6 +78,7 @@ parserag:
 
   vision:
     enabled: true
+    provider: gemini             # gemini | openai — sélectionne l'implémentation du port VisionFallback
     confidence-threshold: 0.55
     quality-threshold: 0.75      # qualité sémantique min d'une grille Tabula borderless ; en dessous → fallback vision
     max-pages-per-document: 20
