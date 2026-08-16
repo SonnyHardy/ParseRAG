@@ -5,7 +5,7 @@ import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableRegion;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.service.fallback.VisionBudget;
-import com.sonny.parserag.service.fallback.VisionFallbackService;
+import com.sonny.parserag.service.fallback.VisionFallback;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
@@ -38,7 +38,7 @@ import java.util.regex.Pattern;
  *   <li><strong>borderless</strong> → {@link BasicExtractionAlgorithm} ciblé sur la région (gratuit,
  *       hors-ligne) ; si la grille obtenue est absente ou de mauvaise qualité
  *       ({@code confidence < vision.confidence-threshold}) et que le fallback vision est disponible,
- *       on rend l'image de la région et on délègue à {@link VisionFallbackService}.</li>
+ *       on rend l'image de la région et on délègue à {@link VisionFallback}.</li>
  * </ul>
  *
  * <p>Cibler une <em>région</em> (et non la page entière) est ce qui rend Tabula fiable sur un papier
@@ -75,7 +75,7 @@ public class TableExtractorService {
 
     private final AppProperties appProperties;
     private final TableRegionDetector tableRegionDetector;
-    private final VisionFallbackService visionFallbackService;
+    private final VisionFallback visionFallback;
 
     /** Détecte les régions puis extrait (chemin autonome, ex. tests). */
     public List<TableResult> extract(byte[] pdfBytes, ExtractedDocument doc) {
@@ -123,9 +123,9 @@ public class TableExtractorService {
                     boolean poor = tr == null
                             || semanticQuality(tr) < qualityThreshold
                             || hasStructuralDefect(tr);
-                    if (poor && visionFallbackService.isAvailable() && budget.hasRemaining()) {
+                    if (poor && visionFallback.isAvailable() && budget.hasRemaining()) {
                         byte[] img = renderRegion(renderer, region);
-                        TableResult vision = visionFallbackService.extractTable(img, region.page(), region.caption());
+                        TableResult vision = visionFallback.extractTable(img, region.page(), region.caption());
                         if (vision != null) {
                             tr = vision;
                             budget.tryConsume();

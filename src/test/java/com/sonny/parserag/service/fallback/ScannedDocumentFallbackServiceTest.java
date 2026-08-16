@@ -1,6 +1,5 @@
 package com.sonny.parserag.service.fallback;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ChunkType;
@@ -30,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Teste le mapping du fallback vision plein-page → chunks, sur un PDF image-only synthétisé,
- * avec une {@link VisionFallbackService} factice (aucun appel réseau).
+ * avec un {@link VisionFallback} factice (aucun appel réseau).
  */
 class ScannedDocumentFallbackServiceTest {
 
@@ -44,11 +43,16 @@ class ScannedDocumentFallbackServiceTest {
     }
 
     /** Vision factice : disponibilité paramétrable, renvoie texte + un tableau pour toute page. */
-    private static VisionFallbackService stubVision(AppProperties p, boolean available) {
-        return new VisionFallbackService(p, new ObjectMapper()) {
+    private static VisionFallback stubVision(boolean available) {
+        return new VisionFallback() {
             @Override
             public boolean isAvailable() {
                 return available;
+            }
+
+            @Override
+            public TableResult extractTable(byte[] png, int page, String caption) {
+                return null;   // non sollicité par ce chemin
             }
 
             @Override
@@ -62,7 +66,7 @@ class ScannedDocumentFallbackServiceTest {
     }
 
     private static ScannedDocumentFallbackService service(AppProperties p, boolean available) {
-        return new ScannedDocumentFallbackService(stubVision(p, available),
+        return new ScannedDocumentFallbackService(stubVision(available),
                 new ChunkingService(p, new ConfidenceCalculatorService(p)));
     }
 

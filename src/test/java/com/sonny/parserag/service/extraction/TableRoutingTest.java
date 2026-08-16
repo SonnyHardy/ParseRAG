@@ -4,7 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableResult;
-import com.sonny.parserag.service.fallback.VisionFallbackService;
+import com.sonny.parserag.service.fallback.GeminiVisionFallbackService;
+import com.sonny.parserag.service.fallback.VisionResponseParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -17,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test du routage d'extraction (détection région → Tabula ciblé / fallback vision), hors-ligne.
- * La vision est indisponible (clé OpenAI vide), donc seuls les chemins Tabula ciblés sont exercés.
+ * La vision est indisponible (clé d'API vide), donc seuls les chemins Tabula ciblés sont exercés.
  * Logue chaque tableau extrait pour inspection.
  */
 class TableRoutingTest {
@@ -35,7 +36,7 @@ class TableRoutingTest {
         return new TableExtractorService(
                 props,
                 new TableRegionDetector(new PageGeometryAnalyzer()),
-                new VisionFallbackService(props, new ObjectMapper()));
+                new GeminiVisionFallbackService(props, new VisionResponseParser(new ObjectMapper())));
     }
 
     private byte[] load(String name) throws IOException {
