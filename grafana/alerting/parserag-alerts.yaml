@@ -1,0 +1,130 @@
+# Règles d'alerte ParseRAG (issue #38, §6) — format de provisioning Grafana Unified Alerting.
+#
+# Import : Grafana → Alerting → Alert rules → « Import alert rules » (ou provisioning fichier si tu
+# héberges Grafana toi-même). Sur Grafana Cloud, l'import par fichier passe par l'API ou le bouton
+# d'import de l'UI.
+#
+# Remplacer <DATASOURCE_UID> par l'UID de ta source Prometheus (Connections → Data sources → l'UID
+# est dans l'URL de la page). Les trois règles sont volontairement peu nombreuses : une alerte qui
+# ne réveille personne est du bruit, et sur un service à faible trafic la plupart des seuils
+# classiques se déclenchent à vide.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: parserag
+    folder: ParseRAG
+    interval: 1m
+    rules:
+
+      # ── 1. Taux d'erreur sur /parse ───────────────────────────────────────────────────
+      # Le garde-fou principal : il couvre indifféremment une régression de code, un modèle
+      # vision indisponible ou une base qui tangue.
+      # Le dénominateur est protégé par clamp_min : sans trafic, 0/0 donnerait NaN et l'alerte
+      # basculerait en état « no data » plutôt qu'en OK.
+      - uid: parserag-parse-error-rate
+        title: ParseRAG — taux d'erreur /parse
+        condition: seuil
+        for: 10m
+        annotations:
+          summary: "Plus de 10 % des parses échouent depuis 10 minutes"
+          description: >-
+            Ventiler par error_code sur le dashboard « ParseRAG — Pipeline ».
+            INTERNAL_ERROR pointe une panne non métier ; un code métier majoritaire
+            (FILE_TOO_LARGE, INVALID_FILE_FORMAT) pointe plutôt un client fautif.
+        labels:
+          severity: critical
+          service: parserag
+        data:
+          - refId: taux
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: <DATASOURCE_UID>
+            model:
+              refId: taux
+              editorMode: code
+              instant: true
+              expr: >-
+                sum(rate(parserag_parse_total{outcome="failure"}[5m]))
+                / clamp_min(sum(rate(parserag_parse_total[5m])), 0.0001)
+          - refId: seuil
+            datasourceUid: __expr__
+            model:
+              refId: seuil
+              type: threshold
+              expression: taux
+              conditions:
+                - evaluator: { type: gt, params: [0.1] }
+        noDataState: OK        # pas de trafic n'est pas un incident
+        execErrState: Alerting
+
+      # ── 2. Saturation du pool Hikari ──────────────────────────────────────────────────
+      # Le pool est dimensionné à 5 (spring.datasource.hikari.maximum-pool-size). Des connexions
+      # en attente signifient que des requêtes patientent avant même de toucher la base.
+      - uid: parserag-hikari-saturation
+        title: ParseRAG — pool de connexions saturé
+        condition: seuil
+        for: 5m
+        annotations:
+          summary: "Des requêtes attendent une connexion à la base depuis 5 minutes"
+          description: >-
+            hikaricp_connections_pending > 0 en continu. Soit le trafic dépasse le
+            dimensionnement du pool (5), soit des requêtes sont anormalement lentes.
+        labels:
+          severity: warning
+          service: parserag
+        data:
+          - refId: attente
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: <DATASOURCE_UID>
+            model:
+              refId: attente
+              editorMode: code
+              instant: true
+              expr: max(hikaricp_connections_pending)
+          - refId: seuil
+            datasourceUid: __expr__
+            model:
+              refId: seuil
+              type: threshold
+              expression: attente
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Alerting
+
+      # ── 3. Base injoignable ───────────────────────────────────────────────────────────
+      # Pas de métrique « DB UP/DOWN » dédiée : ApiKeyFilter compte déjà chaque lookup de clé
+      # qui échoue faute de base (reason=db_unavailable) et rend un 503. C'est un signal plus
+      # direct qu'une sonde périodique — il ne se déclenche que si du trafic réel est impacté.
+      - uid: parserag-db-unavailable
+        title: ParseRAG — base de données injoignable
+        condition: seuil
+        for: 2m
+        annotations:
+          summary: "Les requêtes reçoivent 503 DATABASE_UNAVAILABLE"
+          description: >-
+            parserag_auth_failures_total{reason="db_unavailable"} progresse : Postgres est
+            injoignable ou le pool ne parvient plus à ouvrir de transaction. Tout l'API est
+            hors service, aucun chemin n'est exempté du filtre de clé.
+        labels:
+          severity: critical
+          service: parserag
+        data:
+          - refId: echecs
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: <DATASOURCE_UID>
+            model:
+              refId: echecs
+              editorMode: code
+              instant: true
+              expr: sum(rate(parserag_auth_failures_total{reason="db_unavailable"}[5m]))
+          - refId: seuil
+            datasourceUid: __expr__
+            model:
+              refId: seuil
+              type: threshold
+              expression: echecs
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Alerting

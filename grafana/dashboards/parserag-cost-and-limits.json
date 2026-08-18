@@ -1,0 +1,225 @@
+{
+  "title": "ParseRAG — Coûts vision & limites",
+  "uid": "parserag-cost-limits",
+  "tags": ["parserag", "issue-38"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "env",
+        "label": "Environnement",
+        "type": "query",
+        "datasource": "${datasource}",
+        "query": "label_values(parserag_parse_total, deployment_environment)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Fallback vision — coût",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Tokens consommés (fenêtre)",
+      "description": "Le poste de coût direct du fallback vision. increase() sur la fenêtre du dashboard.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum(increase(parserag_vision_tokens_total{deployment_environment=~\"$env\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens par nature",
+      "description": "prompt = l'image envoyée (le gros du coût), completion = la réponse, thoughts = le raisonnement. thoughts doit rester marginal : thinking-level est à minimal.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (type) (rate(parserag_vision_tokens_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Appels vision par issue",
+      "description": "Un taux d'échec qui monte annonce une dégradation en manual_review avant que la qualité ne s'en ressente.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (outcome, model) (rate(parserag_vision_calls_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{model}} — {{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence des appels vision (p95)",
+      "description": "C'est la composante dominante du temps de parse sur un document scanné.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(parserag_vision_duration_seconds_bucket{deployment_environment=~\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{provider}} p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Budget vision épuisé (documents)",
+      "description": "Compte les documents ayant atteint le cap vision par document. Une valeur non nulle veut dire que des pages sont parties en revue manuelle faute de budget — c'est le moment de relever max-pages-per-document.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum(increase(parserag_vision_budget_exhausted_total{deployment_environment=~\"$env\"}[$__interval]))",
+          "legendFormat": "documents au cap"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Limites & authentification",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejets rate-limit par plan",
+      "description": "Un plan qui sature régulièrement est soit sous-dimensionné, soit mal utilisé côté client.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_ratelimit_rejected_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejets quota par plan",
+      "description": "Contrairement au rate-limit, un rejet quota ne se résorbe pas tout seul : il dure jusqu'au reset du cycle ou à un upgrade.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_quota_rejected_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Consommation moyenne du quota par plan",
+      "description": "Relevé à chaque requête de parse. Approche de 1 = des clients vont être bloqués sous peu.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 15 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.8 } ] },
+          "custom": { "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_quota_usage_ratio_sum{deployment_environment=~\"$env\"}[$__rate_interval])) / clamp_min(sum by (plan) (rate(parserag_quota_usage_ratio_count{deployment_environment=~\"$env\"}[$__rate_interval])), 0.0001)",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Échecs d'authentification par motif",
+      "description": "missing_key = client mal configuré · invalid_key = clé révoquée ou tentative · db_unavailable = incident de notre côté, pas du client.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (reason) (rate(parserag_auth_failures_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Buckets de rate limiting vivants",
+      "description": "Empreinte mémoire du rate limiter : la map n'a aucune éviction, elle croît avec le nombre de clés vues depuis le démarrage (issue #35). Une croissance monotone sans plateau est le signal à surveiller.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "parserag_ratelimit_buckets_active{deployment_environment=~\"$env\"}",
+          "legendFormat": "buckets"
+        }
+      ]
+    }
+  ]
+}
