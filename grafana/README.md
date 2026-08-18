@@ -15,8 +15,18 @@ redéployer à l'identique.
 demande quelle source Prometheus utiliser : les panneaux passent par une variable `datasource`, il
 n'y a donc aucun UID en dur à corriger.
 
-**Alertes** — remplacer `<DATASOURCE_UID>` par l'UID de la source Prometheus (Connections → Data
-sources, l'UID est dans l'URL), puis importer via Alerting → Alert rules → Import.
+**Alertes** — Alerting → Alert rules → *Import alert rules* → **Prometheus YAML file**. La source de
+données se choisit dans l'écran d'import : rien à substituer dans le fichier.
+
+Le fichier est au **format de règles Prometheus** (`groups[].rules[].alert/expr/for`), et non au
+format de provisioning Grafana (`apiVersion`, `orgId`, `folder`, `uid`, `title`, `condition`,
+`data`). Ce dernier ne sert qu'au provisioning par fichier d'une instance auto-hébergée ; l'import
+de Grafana Cloud le rejette avec « missing or invalid groups array at index 0 ».
+
+Deux conséquences du format : le seuil fait partie de l'expression (une règle se déclenche dès que
+son expression renvoie une série), et les états *no data* / *erreur d'exécution* ne s'y expriment
+pas — Grafana applique ses défauts à l'import, à ajuster ensuite règle par règle dans l'UI si le
+silence en l'absence de trafic est souhaité.
 
 ## Noms de séries : d'où ils viennent
 
