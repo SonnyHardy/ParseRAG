@@ -59,8 +59,14 @@ public class PageGeometryAnalyzer {
      * Passe « candidats » : part des baselines qu'un bin de gouttière peut tolérer. Généreuse à
      * dessein — elle ne fait que <em>localiser</em> une gouttière possible ; la passe par bande et
      * les gardes ci-dessous décident si c'en est vraiment une.
+     *
+     * <p>Calibrée sur le corpus : à 10 %, resnet p5 restait entrelacée à un fragment près (sa
+     * gouttière est traversée par 9 fragments sur 82 baselines, la tolérance en autorisait 8).
+     * Mesuré à 20 % : chunks en revue manuelle 59 → 54, sans qu'aucune page mono-colonne ne gagne
+     * de découpage. Toute modification de ce seuil doit être re-mesurée avec
+     * {@code ColumnDetectionBenchmark}.
      */
-    private static final float CANDIDATE_TOLERANCE_RATIO = 0.10f;
+    private static final float CANDIDATE_TOLERANCE_RATIO = 0.20f;
 
     /**
      * Passe par bande : plus stricte, mais jamais nulle. Sur les vraies pages, une gouttière n'est

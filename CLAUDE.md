@@ -186,8 +186,12 @@ Three guards, each earned from a measured failure — do not remove one without 
 
 Why it matters: before #31 a *single* element crossing the gutter — title, author line, arXiv stamp,
 figure caption — made the whole page fall back to a global `(Y, X)` sort, **interleaving the two
-columns** line by line. Measured across the corpus, the fix took manual-review chunks from 87 to 59
-(BERT 17 → 0, EnnsDoc 4 → 0) while leaving 1-column documents byte-identical.
+columns** line by line. Measured across the corpus, the fix took manual-review chunks from 87 to 54
+(BERT 17 → 0, EnnsDoc 4 → 0, resnet 14 → 0) while leaving 1-column documents byte-identical.
+
+The thresholds were calibrated *on the corpus*, not chosen a priori — resnet p5 stayed interleaved
+by a single fragment until the candidate tolerance went from 10 % to 20 %. Re-run
+`ColumnDetectionBenchmark` (`@Disabled`, sweeps all 542 pages) after touching any of them.
 
 ## Key architectural detail: header/footer cleaning
 
