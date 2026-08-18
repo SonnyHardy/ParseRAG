@@ -68,6 +68,75 @@ class SuspectLineDetectionTest {
         assertTrue(extractor.computeSuspectLines(x, texts, PAGE_WIDTH).isEmpty());
     }
 
+    // ── Faux positifs que l'ancien critère « tout saut arrière » produisait (#31) ─────────
+
+    /**
+     * Listing de code : les retours à gauche sont constants, mais les X se répartissent sur de
+     * multiples niveaux d'indentation rapprochés — aucune paire d'ancres franchement séparée.
+     */
+    @Test
+    void codeListingIsNotSuspect() {
+        List<Float>  x     = List.of(80f, 100f, 120f, 100f, 80f, 140f, 100f, 80f);
+        List<String> texts = List.of("def solve(n):", "total = 0", "for i in range(n):",
+                                     "total += i", "return total", "print(solve(10))",
+                                     "autre ligne", "fin du bloc");
+
+        assertTrue(extractor.computeSuspectLines(x, texts, PAGE_WIDTH).isEmpty(),
+                "un listing de code ne doit pas passer pour deux colonnes entrelacées");
+    }
+
+    /** Liste à puces : la puce et son texte sont séparés de 18pt, très en deçà des 15 % requis. */
+    @Test
+    void bulletListIsNotSuspect() {
+        List<Float>  x     = List.of(90f, 108f, 90f, 108f, 90f, 108f);
+        List<String> texts = List.of("premier point", "suite du premier", "deuxieme point",
+                                     "suite du deuxieme", "troisieme point", "suite du troisieme");
+
+        assertTrue(extractor.computeSuspectLines(x, texts, PAGE_WIDTH).isEmpty(),
+                "une liste a puces alterne, mais ses deux ancres sont trop proches");
+    }
+
+    /**
+     * Équation centrée isolée : l'ancre de droite existe et est bien séparée, mais ne porte qu'une
+     * ligne sur sept — elle ne décrit pas une colonne.
+     */
+    @Test
+    void isolatedCenteredLineIsNotSuspect() {
+        List<Float>  x     = List.of(80f, 80f, 80f, 250f, 80f, 80f, 80f);
+        List<String> texts = List.of("ligne un", "ligne deux", "ligne trois", "E = mc au carre",
+                                     "ligne cinq", "ligne six", "ligne sept");
+
+        assertTrue(extractor.computeSuspectLines(x, texts, PAGE_WIDTH).isEmpty(),
+                "une seule ligne centree ne fait pas une colonne");
+    }
+
+    /** Un aller-retour unique (encadré, figure) n'est pas un entrelacement : il en faut la répétition. */
+    @Test
+    void singleRoundTripIsNotSuspect() {
+        List<Float>  x     = List.of(80f, 80f, 320f, 320f, 80f, 80f, 80f, 320f);
+        List<String> texts = List.of("ligne un", "ligne deux", "encadre un", "encadre deux",
+                                     "ligne trois", "ligne quatre", "ligne cinq", "encadre trois");
+
+        assertTrue(extractor.computeSuspectLines(x, texts, PAGE_WIDTH).isEmpty(),
+                "deux bascules seulement : sous le seuil de repetition");
+    }
+
+    /**
+     * Le bord d'une colonne n'est pas parfaitement régulier : des débuts de ligne qui varient de
+     * quelques points doivent rester la MÊME ancre, sinon chaque variante passe sous le seuil de
+     * représentativité (le cas qui faisait manquer resnet p5).
+     */
+    @Test
+    void columnEdgeJitterStillFormsOneAnchor() {
+        List<Float>  x     = List.of(80f, 320f, 84f, 309f, 80f, 317f, 82f, 305f);
+        List<String> texts = List.of("gauche un", "droite un", "gauche deux", "droite deux",
+                                     "gauche trois", "droite trois", "gauche quatre", "droite quatre");
+
+        assertEquals(Set.of("gauche deux", "gauche trois", "gauche quatre"),
+                extractor.computeSuspectLines(x, texts, PAGE_WIDTH),
+                "les variations de quelques points ne doivent pas eclater l'ancre");
+    }
+
     /** Les lignes très courtes ne sont pas retenues : trop ambiguës pour être attribuées à un chunk. */
     @Test
     void veryShortLinesAreIgnored() {

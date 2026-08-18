@@ -193,6 +193,29 @@ The thresholds were calibrated *on the corpus*, not chosen a priori — resnet p
 by a single fragment until the candidate tolerance went from 10 % to 20 %. Re-run
 `ColumnDetectionBenchmark` (`@Disabled`, sweeps all 542 pages) after touching any of them.
 
+## The reading-order oracle (issue #30, palier 3)
+
+`PdfTextExtractorService.computeSuspectLines` is the *verifier*: given the line-start X sequence of
+a mono-column assembly, it reports the lines that betray interleaving. It runs **only** on pages
+assembled mono — a page assembled column by column is correct by construction.
+
+It looks for the **signature** of interleaving: a repeated alternation between two *stable*,
+well-separated X anchors. Not merely a backward jump — the first version used that, and it was right
+one time in five (213 of 541 corpus pages flagged wrongly), because code listings, bullet lists,
+centred equations and tables all jump backwards without any interleaving. Four conditions, all
+required: two anchors ≥ 15 % of page width apart, each carrying ≥ 20 % of the lines, ≥ 4 alternations
+between them, and only then the lines returning to the left anchor are flagged. Anchor grouping is
+deliberately loose (20 pt) — at 5 pt a single column edge split into three anchors, each falling
+below the share threshold.
+
+Measured on the corpus against the band detector as ground truth: **precision 18 % → 97 %**, recall
+70 %, one false positive left. Manual-review chunks fell from 54 to 8.
+
+Recall matters less than precision *today* — genuinely multi-column pages are assembled by columns
+and never reach the oracle, so its only job is to stay quiet on healthy mono pages. That balance
+would shift if the oracle ever drives a retry loop, where a false positive costs only ~0.2 ms of
+recomputation; the thresholds should be revisited then, with `ColumnDetectionBenchmark` re-run.
+
 ## Key architectural detail: header/footer cleaning
 
 Lives entirely in the package `com.sonny.parserag.service.headerfooter`, designed as **stacked
