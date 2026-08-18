@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -190,33 +189,56 @@ public class PdfTextExtractorService {
             if (fragments.isEmpty()) return new PageExtraction("", Set.of());
         }
 
-        float[] splits = pageGeometryAnalyzer.columnSplits(fragments, pageWidth, pageHeight);
+        List<Band> bands = pageGeometryAnalyzer.columnBands(fragments, pageWidth, pageHeight);
+        boolean multiColumn = bands.stream().anyMatch(b -> b.columns() > 1);
 
-        Assembled assembled;
-        Set<String> suspectLines;
-        if (splits.length == 0) {
-            // Pas de gouttière détectée → assemblage mono-colonne. C'est ICI que deux colonnes mal
-            // séparées s'entrelacent (cf. BERT p.1). On relève les lignes en désordre sur ce flux.
-            assembled = assembleAsSingleColumn(fragments);
-            suspectLines = computeSuspectLines(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
-        } else {
-            assembled = assembleAsColumns(fragments, splits);
+        Assembled assembled = assembleAsBands(bands, pageNum);
 
-            // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
-            // massacre la structure. On bascule en mono-colonne (tri Y → X global).
-            if (looksLikeTable(assembled.text())) {
-                log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
-                assembled = assembleAsSingleColumn(fragments);
-            } else {
-                log.debug("Page {} — {} columns detected, splits at {}",
-                        pageNum, splits.length + 1, Arrays.toString(splits));
-            }
-            // Colonnes correctement séparées (assemblées colonne par colonne) : on fait confiance à
-            // l'ordre. Le bruit local d'une figure relève du palier 1, pas d'une anomalie de lecture.
-            suspectLines = Set.of();
+        // Les lignes suspectes ne se relèvent que sur un flux mono-colonne : c'est là, et seulement
+        // là, que deux colonnes peuvent s'être entrelacées. Dès qu'une bande a été assemblée colonne
+        // par colonne, l'ordre de lecture est garanti par construction et le bruit local d'une
+        // figure relève du palier 1 de #30, pas d'une anomalie d'ordre de lecture.
+        Set<String> suspectLines = multiColumn
+                ? Set.of()
+                : computeSuspectLines(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+
+        if (multiColumn && log.isDebugEnabled()) {
+            log.debug("Page {} — {} band(s): {}", pageNum, bands.size(),
+                    bands.stream().map(b -> b.columns() + "col/" + b.rows() + "r").toList());
         }
 
         return new PageExtraction(assembled.text(), suspectLines);
+    }
+
+    /**
+     * Assemble la page bande par bande, dans l'ordre de lecture (issue #31) : chaque bande est
+     * rendue selon <em>sa</em> structure — mono-colonne pour un bandeau titre ou une légende pleine
+     * largeur, colonne par colonne pour le corps — puis les bandes sont concaténées de haut en bas.
+     */
+    private Assembled assembleAsBands(List<Band> bands, int pageNum) {
+        StringBuilder out = new StringBuilder(8192);
+        List<Float>  lineStartX = new ArrayList<>();
+        List<String> lineTexts  = new ArrayList<>();
+
+        for (Band band : bands) {
+            Assembled part = band.columns() == 1
+                    ? assembleAsSingleColumn(band.fragments())
+                    : assembleAsColumns(band.fragments(), band.splits());
+
+            // Sur une bande tabulaire, le découpage en colonnes massacre la structure : les cellules
+            // d'une même ligne partiraient dans des colonnes distinctes. On y revient au tri global.
+            if (band.columns() > 1 && looksLikeTable(part.text())) {
+                log.debug("Page {} — tabular band detected, falling back to mono-column", pageNum);
+                part = assembleAsSingleColumn(band.fragments());
+            }
+
+            if (part.text().isBlank()) continue;
+            if (!out.isEmpty()) out.append('\n');
+            out.append(part.text());
+            lineStartX.addAll(part.lineStartX());
+            lineTexts.addAll(part.lineTexts());
+        }
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts);
     }
 
     /**
@@ -227,7 +249,7 @@ public class PdfTextExtractorService {
      * l'assemblage a entrelacé deux colonnes (retour gauche après une ligne de la colonne droite).
      * Le texte exact de ces lignes est renvoyé pour permettre leur attribution par chunk au chunking.
      */
-    private Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
+    Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
         int n = lineStartX.size();
         if (n < READING_ORDER_MIN_LINES) return Set.of();
 

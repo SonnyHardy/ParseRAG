@@ -55,7 +55,8 @@ untouched — editing an applied migration breaks Flyway checksum validation).
 
 1. **Validate** — magic bytes (`%PDF`), content-type, 50 MB cap (`ParsePipelineService`).
 2. **Extract** — `PdfTextExtractorService.extract(bytes, plan)` parses with PDFBox once per page and
-   re-assembles text in memory. Page count is capped per plan (`AppProperties.PageLimits.forPlan`).
+   re-assembles text in memory, **band by band** (see below). Page count is capped per plan
+   (`AppProperties.PageLimits.forPlan`).
 3. **Clean** — `HeaderFooterCleaningService.clean(bytes, doc)` strips repeating headers/footers.
 4. **Chunk** — `ChunkingService.chunk(doc)` produces `List<Chunk>`.
 5. Return `ParseResponse.ok(...)`.
@@ -155,6 +156,38 @@ consumers — it is orthogonal to the provider.
 annotate with `@ConditionalOnProperty(... havingValue = "<name>")`. Do not mock the vendor SDK client
 in tests — both SDKs expose `final` classes (and `com.google.genai.Client.models` is a public field,
 so a Mockito mock leaves it null); inject a small functional seam instead, as `GeminiCall` does.
+
+## Column detection: bands, not a page-wide gutter (issue #31)
+
+`PageGeometryAnalyzer` is the single source of truth for page geometry, shared by text extraction
+and table-region detection so both see the same columns.
+
+A page is **not** "N columns" — it is a stack of zones: full-width title banner, then two columns,
+then a full-width figure caption, then two columns again. `columnBands` returns one `Band` per zone,
+each with its own `splits`; `PdfTextExtractorService` assembles band by band, top to bottom.
+`columnSplits` is a convenience over it, returning the splits of the **dominant band** (the one
+carrying the most fragments) — that is what `TableRegionDetector` consumes.
+
+The algorithm runs two passes over a **fragment-level** X histogram (never over lines grouped by Y:
+grouping by Y merges both columns into one full-width line, filling the very gutter being searched):
+
+1. a tolerant pass over the page locates *candidate* gutters;
+2. fragments crossing a candidate become band separators, and each band is then analysed on its own.
+
+Three guards, each earned from a measured failure — do not remove one without re-running
+`ColumnDetectionBenchmark`:
+
+- **tolerance is never zero.** Real gutters are not perfectly empty (descenders, rules, figure
+  bleed): resnet p1 has no 8 pt run of strictly-empty bins although its gutter plainly exists.
+- **text required on both sides** of a split. Without it, a page margin or a bullet indent reads as
+  a gutter — that is how a 1-column paper was being reported as 3 columns before #31.
+- **minimum column width.** A wide gutter crossed by a thin residue otherwise yields two splits
+  framing a 13 pt-wide "column".
+
+Why it matters: before #31 a *single* element crossing the gutter — title, author line, arXiv stamp,
+figure caption — made the whole page fall back to a global `(Y, X)` sort, **interleaving the two
+columns** line by line. Measured across the corpus, the fix took manual-review chunks from 87 to 59
+(BERT 17 → 0, EnnsDoc 4 → 0) while leaving 1-column documents byte-identical.
 
 ## Key architectural detail: header/footer cleaning
 
