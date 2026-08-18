@@ -2,6 +2,7 @@ package com.sonny.parserag.service.fallback;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
+import com.sonny.parserag.observability.TestMetrics;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,7 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OpenAiVisionFallbackServiceTest {
 
     private static OpenAiVisionFallbackService service(AppProperties p) {
-        return new OpenAiVisionFallbackService(p, new VisionResponseParser(new ObjectMapper()));
+        return new OpenAiVisionFallbackService(
+                p, new VisionResponseParser(new ObjectMapper()), TestMetrics.metrics());
     }
 
     @Test

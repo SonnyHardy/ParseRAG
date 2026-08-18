@@ -3,6 +3,7 @@ package com.sonny.parserag.service.extraction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.TableResult;
+import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.service.fallback.GeminiVisionFallbackService;
 import com.sonny.parserag.service.fallback.VisionResponseParser;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,9 @@ class TableExtractorServiceTest {
     private final TableExtractorService service = new TableExtractorService(
             new AppProperties(),
             new TableRegionDetector(new PageGeometryAnalyzer()),
-            new GeminiVisionFallbackService(new AppProperties(), new VisionResponseParser(new ObjectMapper())));
+            new GeminiVisionFallbackService(new AppProperties(), new VisionResponseParser(new ObjectMapper()),
+                    TestMetrics.metrics()),
+            TestMetrics.metrics());
     private final AppProperties.Tables cfg = defaultCfg();
 
     private static AppProperties.Tables defaultCfg() {

@@ -41,6 +41,92 @@ logging:
     root: INFO
     com.sonny.parserag: DEBUG
 
+# ── Observabilité OpenTelemetry → Grafana Cloud (issue #38) ────────────────────
+# Export OFF par défaut : sans OTEL_ENABLED, aucune tentative réseau (dev, tests, CI). Les compteurs
+# sont malgré tout enregistrés dans le MeterRegistry, donc lisibles via /actuator/metrics et
+# assertables en test — le code instrumenté n'a aucun garde à porter.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never   # /api/v1/health (issue #37) reste l'endpoint métier, réservé à l'admin
+
+  # ATTENTION : chaque signal a son chemin OTLP propre (/v1/metrics, /v1/traces, /v1/logs) — les
+  # confondre est la première cause de « rien n'arrive dans Grafana ».
+  # OTEL_EXPORTER_OTLP_AUTH porte la valeur complète de l'en-tête (Grafana Cloud : « Basic <base64
+  # de instanceID:token> »). Spring attend ici une *map* d'en-têtes, pas la chaîne « k=v,k=v » de la
+  # convention OTEL_EXPORTER_OTLP_HEADERS — d'où une entrée Authorization explicite.
+  otlp:
+    metrics:
+      export:
+        enabled: ${OTEL_ENABLED:false}
+        url: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/metrics
+        headers:
+          Authorization: ${OTEL_EXPORTER_OTLP_AUTH:}
+        step: 60s           # intervalle d'export (issue : 30-60 s)
+        # Le défaut Micrometer est « milliseconds », ce qui donnerait des séries
+        # parserag_stage_duration_milliseconds_* dans Mimir. Prometheus et les panneaux Grafana
+        # supposent des secondes pour les durées : on s'aligne sur la convention.
+        base-time-unit: seconds
+        # Cumulative, pas delta : Mimir est bâti sur Prometheus, dont le modèle est cumulatif.
+        aggregation-temporality: cumulative
+
+  tracing:
+    export:
+      otlp:
+        enabled: ${OTEL_ENABLED:false}
+    sampling:
+      # Parent-based ratio (défaut Spring = parentbased_traceidratio). À 0.1, une poignée de
+      # requêtes de test a toutes les chances de ne produire aucune trace exportée — mettre
+      # OTEL_SAMPLING=1.0 pour valider la chaîne, puis revenir à 0.1 en régime normal.
+      # Attention : les traceId apparaissent dans les logs même quand la trace n'est PAS
+      # échantillonnée — leur présence ne prouve donc rien sur l'export.
+      probability: ${OTEL_SAMPLING:0.1}
+
+  logging:
+    export:
+      otlp:
+        enabled: ${OTEL_ENABLED:false}
+
+  opentelemetry:
+    resource-attributes:
+      service.name: ParseRAG
+      service.version: '@project.version@'   # filtrage Maven, comme parserag.info.version
+      deployment.environment: ${DEPLOY_ENV:dev}
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+          headers:
+            Authorization: ${OTEL_EXPORTER_OTLP_AUTH:}
+    logging:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/logs
+          headers:
+            Authorization: ${OTEL_EXPORTER_OTLP_AUTH:}
+
+  observations:
+    enable:
+      # Spring Security instrumente chaque maillon de sa chaîne : sur une requête, cela produit
+      # « authorize request », « security filterchain before » et un span par filtre (14 ici) —
+      # une quinzaine de spans de plomberie qui noient les 4 étages du pipeline dans Tempo et
+      # consomment le quota d'ingestion du free tier. Aucun de ces spans ne nous apprend quoi que
+      # ce soit : la chaîne est statique et ses rejets sont déjà comptés par parserag.auth.failures.
+      spring.security: false
+
+  metrics:
+    distribution:
+      # Percentiles sur 3 timers seulement : chaque histogramme multiplie les séries, et le budget
+      # du free tier Grafana Cloud (~10 k séries actives) se consomme vite.
+      percentiles-histogram:
+        http.server.requests: true
+        parserag.parse.duration: true
+        parserag.stage.duration: true
+
 # ── ParseRAG properties (AppProperties.java) ───────────────────
 parserag:
   # Identité exposée par GET /api/v1/health. @project.version@ est substituée au build par le

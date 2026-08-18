@@ -3,6 +3,7 @@ package com.sonny.parserag.service.ratelimit;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
+import com.sonny.parserag.observability.TestMetrics;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -21,7 +22,7 @@ class RateLimitServiceTest {
         rl.setStarterRequestsPerMinute(30);
         rl.setProRequestsPerMinute(100);
         rl.setScaleRequestsPerMinute(300);
-        return new RateLimitService(props);
+        return new RateLimitService(props, TestMetrics.metrics());
     }
 
     private static ApiKey key(Plan plan) {

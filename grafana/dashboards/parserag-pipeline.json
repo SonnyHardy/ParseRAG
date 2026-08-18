@@ -1,0 +1,251 @@
+{
+  "title": "ParseRAG — Pipeline",
+  "uid": "parserag-pipeline",
+  "tags": ["parserag", "issue-38"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "env",
+        "label": "Environnement",
+        "type": "query",
+        "datasource": "${datasource}",
+        "query": "label_values(parserag_parse_total, deployment_environment)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Latence",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence p95 par étage",
+      "description": "histogram_quantile sur parserag_stage_duration_seconds. Répond à « quel étage coûte le temps ». L'étage scanned n'apparaît que sur les documents scannés.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 5, "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max", "mean"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (stage, le) (rate(parserag_stage_duration_seconds_bucket{deployment_environment=~\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence du parse complet (p50 / p95 / p99)",
+      "description": "Vue bout-en-bout côté pipeline. À comparer à http_server_requests_seconds pour isoler le coût du transfert multipart.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(parserag_parse_duration_seconds_bucket{deployment_environment=~\"$env\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(parserag_parse_duration_seconds_bucket{deployment_environment=~\"$env\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(parserag_parse_duration_seconds_bucket{deployment_environment=~\"$env\"}[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Fiabilité",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Taux d'échec global",
+      "description": "Part des parses en échec sur la fenêtre. Seuils alignés sur l'alerte ParseRAG / taux d'erreur.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 11 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "red", "value": 0.1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum(rate(parserag_parse_total{outcome=\"failure\", deployment_environment=~\"$env\"}[$__rate_interval])) / clamp_min(sum(rate(parserag_parse_total{deployment_environment=~\"$env\"}[$__rate_interval])), 0.0001)"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Taux d'erreur par plan",
+      "description": "Un plan qui décroche seul oriente vers un profil de documents ou un quota, pas vers une panne globale.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_parse_total{outcome=\"failure\", deployment_environment=~\"$env\"}[$__rate_interval])) / clamp_min(sum by (plan) (rate(parserag_parse_total{deployment_environment=~\"$env\"}[$__rate_interval])), 0.0001)",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Échecs par code d'erreur",
+      "description": "error_code vient de ParseRagException. INTERNAL_ERROR signale une panne non métier : c'est celui qui doit rester à zéro.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (error_code) (rate(parserag_parse_total{outcome=\"failure\", deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{error_code}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Volume & qualité",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Documents parsés par plan",
+      "description": "La statistique produit : qui consomme, et combien.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_parse_total{outcome=\"success\", deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Taille moyenne des documents (pages)",
+      "description": "Sum/count du DistributionSummary : le nombre de pages moyen par document, par plan.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (plan) (rate(parserag_document_pages_sum{deployment_environment=~\"$env\"}[$__rate_interval])) / clamp_min(sum by (plan) (rate(parserag_document_pages_count{deployment_environment=~\"$env\"}[$__rate_interval])), 0.0001)",
+          "legendFormat": "{{plan}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Part de chunks en revue manuelle",
+      "description": "Le signal qualité : une montée veut dire que la vision échoue ou que les documents se dégradent. Rapporté au volume de chunks produits.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum(rate(parserag_chunks_manual_review_total{deployment_environment=~\"$env\"}[$__rate_interval])) / clamp_min(sum(rate(parserag_chunks_produced_sum{deployment_environment=~\"$env\"}[$__rate_interval])), 0.0001)",
+          "legendFormat": "chunks en revue"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Nettoyage header/footer — blocs confirmés par couche",
+      "description": "Quelle couche fait le travail. Une couche à zéro durablement est une couche à réexaminer (cf. package service.headerfooter).",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "${datasource}",
+          "editorMode": "code",
+          "expr": "sum by (detector) (rate(parserag_headerfooter_blocks_confirmed_total{deployment_environment=~\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{detector}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pool de connexions Hikari",
+      "description": "actif vs max, et connexions en attente. Le pool est dimensionné à 5 : une attente durable est le signal de saturation.",
+      "datasource": "${datasource}",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "editorMode": "code", "expr": "hikaricp_connections_active{deployment_environment=~\"$env\"}", "legendFormat": "actives" },
+        { "refId": "B", "datasource": "${datasource}", "editorMode": "code", "expr": "hikaricp_connections_max{deployment_environment=~\"$env\"}", "legendFormat": "max" },
+        { "refId": "C", "datasource": "${datasource}", "editorMode": "code", "expr": "hikaricp_connections_pending{deployment_environment=~\"$env\"}", "legendFormat": "en attente" }
+      ]
+    }
+  ]
+}

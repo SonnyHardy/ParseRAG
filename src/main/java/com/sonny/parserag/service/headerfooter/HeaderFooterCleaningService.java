@@ -2,6 +2,7 @@ package com.sonny.parserag.service.headerfooter;
 
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.ExtractedDocument;
+import com.sonny.parserag.observability.ParseRagMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,7 @@ public class HeaderFooterCleaningService {
     private final BlockExtractor blockExtractor;
     private final List<HeaderFooterDetector> detectors; // injectés ordonnés (@Order)
     private final LineStripper lineStripper;
+    private final ParseRagMetrics metrics;
 
     public ExtractedDocument clean(byte[] pdfBytes, ExtractedDocument doc) {
         AppProperties.HeaderFooterCleaning cfg = appProperties.getHeaderFooterCleaning();
@@ -61,6 +63,9 @@ public class HeaderFooterCleaningService {
             Set<TextBlock> found = detector.detect(ctx);
             int before = confirmed.size();
             confirmed.addAll(found);
+            // Ce que chaque couche apporte *en propre* : les blocs déjà confirmés par une couche
+            // précédente ne lui sont pas recomptés, sinon l'ordre des @Order fausserait le mérite.
+            metrics.headerFooterBlocks(detector.name(), confirmed.size() - before);
             log.debug("HF layer '{}' — docId: {}, +{} new confirmations (total {})",
                     detector.name(), doc.documentId(), confirmed.size() - before, confirmed.size());
         }
@@ -72,6 +77,7 @@ public class HeaderFooterCleaningService {
         }
 
         LineStripper.Result result = lineStripper.strip(doc, confirmed);
+        metrics.headerFooterLines(result.linesRemoved());
         log.debug("Header/footer cleaning complete — docId: {}, blocks confirmed: {}/{}, lines stripped: {}",
                 doc.documentId(), confirmed.size(), blocks.size(), result.linesRemoved());
 

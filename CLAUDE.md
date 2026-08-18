@@ -36,6 +36,11 @@ empty in dev), `OPENAI_API_KEY` (only for the legacy vision provider, empty in d
 alias and is not used here. With no key, `VisionFallback.isAvailable()` is false, no SDK client is
 ever built, and scanned pages degrade to `manual_review_needed` — the app runs fine without one.
 
+Telemetry (issue #38) is off unless `OTEL_ENABLED=true`; when on it also needs
+`OTEL_EXPORTER_OTLP_ENDPOINT` (base URL, no `/v1/...` suffix) and `OTEL_EXPORTER_OTLP_AUTH` (the full
+`Authorization` header value — Grafana Cloud: `Basic <base64 of instanceID:token>`). `DEPLOY_ENV`
+(default `dev`) tags the exported data.
+
 Postgres must be reachable. Flyway runs migrations from `src/main/resources/db/migration` on
 startup (`baseline-on-migrate: true`, `ddl-auto: none` — schema is owned by Flyway, never Hibernate).
 `V1__create_api_keys_table.sql` seeds a dev key: the raw key is `test-key-dev-123` (its SHA-256 is

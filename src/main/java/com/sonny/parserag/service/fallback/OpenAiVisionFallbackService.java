@@ -11,11 +11,14 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.domain.VisionPageResult;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.ParseRagMetrics.Outcome;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 
@@ -38,8 +41,12 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "parserag.vision", name = "provider", havingValue = "openai")
 public class OpenAiVisionFallbackService implements VisionFallback {
 
+    /** Tag {@code provider} des métriques vision (issue #38). */
+    private static final String PROVIDER = "openai";
+
     private final AppProperties appProperties;
     private final VisionResponseParser parser;
+    private final ParseRagMetrics metrics;
 
     /**
      * Client OpenAI officiel. Construit <em>paresseusement</em> au premier appel ({@link #client()}) :
@@ -49,15 +56,17 @@ public class OpenAiVisionFallbackService implements VisionFallback {
     private volatile OpenAIClient openAiClient;
 
     @Autowired
-    public OpenAiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser) {
-        this(appProperties, parser, null);
+    public OpenAiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser,
+                                       ParseRagMetrics metrics) {
+        this(appProperties, parser, metrics, null);
     }
 
     /** Constructeur testable (client OpenAI injectable / mockable). */
     OpenAiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser,
-                                OpenAIClient openAiClient) {
+                                ParseRagMetrics metrics, OpenAIClient openAiClient) {
         this.appProperties = appProperties;
         this.parser = parser;
+        this.metrics = metrics;
         this.openAiClient = openAiClient;
     }
 
@@ -126,6 +135,21 @@ public class OpenAiVisionFallbackService implements VisionFallback {
      * du 1ᵉʳ choix, ou {@code null}.
      */
     private String callOpenAi(String systemPrompt, String userPrompt, byte[] png) {
+        long start = System.nanoTime();
+        Outcome outcome = Outcome.FAILURE;
+        try {
+            String content = doCallOpenAi(systemPrompt, userPrompt, png);
+            if (content != null && !content.isBlank()) outcome = Outcome.SUCCESS;
+            return content;
+        } finally {
+            // Même métrique que Gemini : basculer de fournisseur ne doit pas créer d'angle mort.
+            // Les tokens, eux, restent spécifiques au SDK et ne sont relevés que côté Gemini.
+            metrics.visionCall(PROVIDER, appProperties.getOpenai().getModel(), outcome,
+                    Duration.ofNanos(System.nanoTime() - start));
+        }
+    }
+
+    private String doCallOpenAi(String systemPrompt, String userPrompt, byte[] png) {
         String dataUri = "data:image/png;base64," + Base64.getEncoder().encodeToString(png);
 
         ChatCompletionContentPart textPart = ChatCompletionContentPart.ofText(

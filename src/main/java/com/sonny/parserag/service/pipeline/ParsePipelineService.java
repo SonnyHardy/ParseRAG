@@ -10,6 +10,9 @@ import com.sonny.parserag.model.domain.TableRegion;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.config.AppProperties;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.ParseRagMetrics.Outcome;
+import com.sonny.parserag.observability.ParseRagMetrics.Stage;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
 import com.sonny.parserag.service.extraction.ScannedPageDetector;
 import com.sonny.parserag.service.extraction.TableExtractorService;
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -62,51 +66,100 @@ public class ParsePipelineService {
     private final TableTextStripper tableTextStripper;
     private final ScannedPageDetector scannedPageDetector;
     private final ScannedDocumentFallbackService scannedDocumentFallbackService;
+    private final ParseRagMetrics metrics;
 
+    /**
+     * Point d'entrée du pipeline. Enveloppe {@link #runPipeline} pour relever l'issue du parse
+     * (issue #38) : le compteur {@code parserag.parse.total} est incrémenté sur <em>tous</em> les
+     * chemins, succès comme échec, sinon le taux d'erreur par plan serait aveugle aux échecs.
+     * L'exception est toujours relancée telle quelle — l'instrumentation n'altère aucun comportement.
+     */
     public ParseResponse process(MultipartFile file, ApiKey apiKey) {
         Plan plan = apiKey != null ? apiKey.getPlan() : Plan.FREE;
-
         long startTime = System.currentTimeMillis();
+
         log.info("Pipeline start — file: '{}', size: {} bytes, plan: {}",
                 file.getOriginalFilename(), file.getSize(), plan);
+
+        try {
+            ParseResponse response = runPipeline(file, plan);
+            metrics.parseCompleted(plan, Outcome.SUCCESS, null, elapsed(startTime));
+            return response;
+        } catch (ParseRagException e) {
+            metrics.parseCompleted(plan, Outcome.FAILURE, e.getErrorCode(), elapsed(startTime));
+            throw e;
+        } catch (RuntimeException e) {
+            // Échec non métier : un code stable vaut mieux que le nom de la classe, qui ferait
+            // varier la cardinalité du tag au gré des refactors.
+            metrics.parseCompleted(plan, Outcome.FAILURE, "INTERNAL_ERROR", elapsed(startTime));
+            throw e;
+        }
+    }
+
+    private ParseResponse runPipeline(MultipartFile file, Plan plan) {
+        long startTime = System.currentTimeMillis();
 
         byte[] bytes = readBytes(file);
         validateFile(file, bytes);
 
-        ExtractedDocument doc = pdfTextExtractorService.extract(bytes, plan);
-        doc = headerFooterCleaningService.clean(bytes, doc);
+        ExtractedDocument extracted = metrics.stage(Stage.EXTRACT,
+                () -> pdfTextExtractorService.extract(bytes, plan));
+        ExtractedDocument cleaned = metrics.stage(Stage.CLEAN,
+                () -> headerFooterCleaningService.clean(bytes, extracted));
 
         // Pages scannées / image-only : routées vers le fallback vision plein-page (issue #11).
-        Set<Integer> scannedPages = scannedPageDetector.scannedPages(doc);
+        Set<Integer> scannedPages = scannedPageDetector.scannedPages(cleaned);
+        metrics.scannedPagesDetected(scannedPages.size());
         // Budget vision partagé pour tout le document (tableaux + pages scannées) : un seul cap.
         VisionBudget visionBudget = new VisionBudget(appProperties.getVision().getMaxPagesPerDocument());
 
         // Détection des régions partagée : extraction structurée + excision du texte (anti-doublon).
         List<TableRegion> tableRegions = tableRegionDetector.detect(bytes);
-        List<TableResult> tables = new ArrayList<>(
-                tableExtractorService.extract(bytes, doc, tableRegions, visionBudget));
-        doc = tableTextStripper.strip(bytes, doc, tableRegions);
+        metrics.tablesDetected(tableRegions.size());
 
-        List<Chunk> textChunks = chunkingService.chunk(doc);
+        List<TableResult> tables = new ArrayList<>(metrics.stage(Stage.TABLES,
+                () -> tableExtractorService.extract(bytes, cleaned, tableRegions, visionBudget)));
+        ExtractedDocument doc = tableTextStripper.strip(bytes, cleaned, tableRegions);
+
+        List<Chunk> textChunks = metrics.stage(Stage.CHUNK, () -> chunkingService.chunk(doc));
 
         if (!scannedPages.isEmpty()) {
             // Écarter les éventuels chunks natifs des pages scannées (défensif), puis ajouter le fallback.
             textChunks = new ArrayList<>(textChunks.stream()
                     .filter(c -> !scannedPages.contains(c.page()))
                     .toList());
-            ScannedExtraction scanned =
-                    scannedDocumentFallbackService.process(bytes, doc, scannedPages, visionBudget);
+            ScannedExtraction scanned = metrics.stage(Stage.SCANNED,
+                    () -> scannedDocumentFallbackService.process(bytes, doc, scannedPages, visionBudget));
             textChunks.addAll(scanned.textChunks());
             tables.addAll(scanned.tables());
         }
 
+        // Cap vision atteint : des pages/tableaux sont partis en revue manuelle faute de budget.
+        // Relevé ici, une fois par document — les deux consommateurs partagent le même compteur,
+        // les instrumenter séparément compterait deux fois le même épuisement.
+        if (visionBudget.max() > 0 && !visionBudget.hasRemaining()) {
+            metrics.visionBudgetExhausted();
+        }
+
         List<Chunk> chunks = assembleChunks(doc.documentId(), textChunks, tables);
+        recordDocumentMetrics(plan, doc, bytes.length, chunks);
 
         long processingMs = System.currentTimeMillis() - startTime;
         log.info("Pipeline done — docId: {}, pages: {}, lang: {}, time: {}ms",
                 doc.documentId(), doc.pageCount(), doc.detectedLanguage(), processingMs);
 
         return ParseResponse.ok(doc.documentId(), doc.pageCount(), doc.detectedLanguage(), processingMs, chunks);
+    }
+
+    /** Volumétrie du document et qualité de sa sortie (issue #38). */
+    private void recordDocumentMetrics(Plan plan, ExtractedDocument doc, int bytes, List<Chunk> chunks) {
+        int manualReview = (int) chunks.stream().filter(Chunk::manualReviewNeeded).count();
+        metrics.documentParsed(plan, doc.pageCount(), bytes, chunks.size(), manualReview);
+        for (Chunk c : chunks) metrics.chunkConfidence(c.confidence());
+    }
+
+    private static Duration elapsed(long startMillis) {
+        return Duration.ofMillis(System.currentTimeMillis() - startMillis);
     }
 
     /**
