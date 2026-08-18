@@ -2,6 +2,7 @@ package com.sonny.parserag.filter;
 
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.model.response.UsageResponse;
+import com.sonny.parserag.observability.ParseRagMetrics;
 import com.sonny.parserag.service.usage.UsageTrackingService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -38,6 +39,7 @@ public class QuotaEnforcementFilter extends OncePerRequestFilter {
 
     private final UsageTrackingService usageTrackingService;
     private final ObjectMapper objectMapper;
+    private final ParseRagMetrics metrics;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -58,7 +60,12 @@ public class QuotaEnforcementFilter extends OncePerRequestFilter {
         }
 
         UsageResponse usage = usageTrackingService.currentUsage(apiKey);
+        // Relevé du ratio ici plutôt qu'en gauge : l'usage vient d'être lu en base, la mesure est
+        // donc gratuite — une gauge imposerait une lecture supplémentaire à chaque scrape.
+        metrics.quotaUsageRatio(apiKey.getPlan(), usage.docsUsed(), usage.docsLimit());
+
         if (usage.docsUsed() >= usage.docsLimit()) {
+            metrics.quotaRejected(apiKey.getPlan());
             writeQuotaExceeded(response, usage);
             return;
         }

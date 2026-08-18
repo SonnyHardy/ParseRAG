@@ -2,6 +2,8 @@ package com.sonny.parserag.service.fallback;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.domain.VisionPageResult;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,14 @@ class GeminiVisionFallbackServiceTest {
 
     private static GeminiVisionFallbackService service(AppProperties p,
                                                        GeminiVisionFallbackService.GeminiCall call) {
-        return new GeminiVisionFallbackService(p, new VisionResponseParser(new ObjectMapper()), call);
+        return service(p, call, TestMetrics.metrics());
+    }
+
+    private static GeminiVisionFallbackService service(AppProperties p,
+                                                       GeminiVisionFallbackService.GeminiCall call,
+                                                       ParseRagMetrics metrics) {
+        return new GeminiVisionFallbackService(
+                p, new VisionResponseParser(new ObjectMapper()), metrics, call);
     }
 
     // ── Disponibilité ─────────────────────────────────────────────────────────────────────

@@ -29,6 +29,25 @@
     <properties>
         <java.version>25</java.version>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <!--
+              Arbitrage protobuf (issue #38). opentelemetry-proto, utilisé par le registre OTLP de
+              Micrometer, exige protobuf-java 4.32 (com.google.protobuf.RuntimeVersion) ; google-genai
+              déclare 3.25.5. Maven retient la version la plus *proche* — donc 3.25.5, puisque
+              google-genai est une dépendance directe — et l'export OTLP échoue au démarrage sur un
+              NoClassDefFoundError, mais seulement quand OTEL_ENABLED=true crée le bean.
+              Le runtime protobuf est rétro-compatible avec du code généré plus ancien : on aligne
+              donc sur la version haute, exigée par un seul des deux camps.
+            -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>4.32.0</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -49,6 +68,39 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+
+        <!-- Observabilité (issue #38) : Actuator + les 3 signaux OTLP.                          -->
+        <!-- spring-boot-starter-opentelemetry est le starter *Spring* de Boot 4 : il tire       -->
+        <!-- micrometer-registry-otlp (métriques), micrometer-tracing-bridge-otel +              -->
+        <!-- opentelemetry-exporter-otlp (traces) et spring-boot-opentelemetry (logs). Le        -->
+        <!-- starter communautaire io.opentelemetry.instrumentation cible Boot 3, pas celui-ci.  -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!--
+          L'exporteur OTLP émet par défaut via okhttp-jvm 5.x, alors que le SDK google-genai
+          embarque okhttp 4.12 + okio 3.6. Les deux artefacts fournissent les mêmes classes
+          okhttp3.* : celles de la 5.x gagnent et appellent un okio qu'elles n'ont pas
+          (NoSuchMethodError okio.Okio.socket au premier appel vision). On bascule donc l'export
+          OTLP sur le sender JDK (java.net.http) : plus aucun OkHttp côté télémétrie, et le client
+          de la vision garde le sien intact.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>

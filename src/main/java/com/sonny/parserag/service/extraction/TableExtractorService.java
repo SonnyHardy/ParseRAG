@@ -5,6 +5,7 @@ import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableRegion;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.service.fallback.VisionBudget;
+import com.sonny.parserag.observability.ParseRagMetrics;
 import com.sonny.parserag.service.fallback.VisionFallback;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,7 @@ public class TableExtractorService {
     private final AppProperties appProperties;
     private final TableRegionDetector tableRegionDetector;
     private final VisionFallback visionFallback;
+    private final ParseRagMetrics metrics;
 
     /** Détecte les régions puis extrait (chemin autonome, ex. tests). */
     public List<TableResult> extract(byte[] pdfBytes, ExtractedDocument doc) {
@@ -132,7 +134,10 @@ public class TableExtractorService {
                             visionUsed++;
                         }
                     }
-                    if (tr != null) results.add(tr);
+                    if (tr != null) {
+                        results.add(tr);
+                        metrics.tableExtracted(!region.bordered());
+                    }
                 } catch (Exception e) {
                     log.warn("Table extraction failed on region p{} (docId {}): {}",
                             region.page(), doc.documentId(), e.toString());

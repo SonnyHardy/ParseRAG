@@ -1,6 +1,8 @@
 package com.sonny.parserag.filter;
 
 import com.sonny.parserag.entity.ApiKey;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.ParseRagMetrics.AuthFailure;
 import com.sonny.parserag.repository.ApiKeyRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -34,6 +36,7 @@ public class ApiKeyFilter extends OncePerRequestFilter {
 
     private final ApiKeyRepository apiKeyRepository;
     private final ObjectMapper objectMapper;
+    private final ParseRagMetrics metrics;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -42,6 +45,7 @@ public class ApiKeyFilter extends OncePerRequestFilter {
         String rawKey = request.getHeader(HEADER_NAME);
 
         if (rawKey == null || rawKey.isBlank()) {
+            metrics.authFailure(AuthFailure.MISSING_KEY);
             writeError(response, HttpStatus.UNAUTHORIZED, "MISSING_API_KEY", "Missing X-API-Key header");
             return;
         }
@@ -64,12 +68,14 @@ public class ApiKeyFilter extends OncePerRequestFilter {
              * 503 au format standard que celui qu'aurait produit le health check.
              */
             log.error("Lookup de la clé API impossible : base injoignable → 503", e);
+            metrics.authFailure(AuthFailure.DB_UNAVAILABLE);
             writeError(response, HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
                     "Database unavailable");
             return;
         }
 
         if (apiKey.isEmpty()) {
+            metrics.authFailure(AuthFailure.INVALID_KEY);
             writeError(response, HttpStatus.FORBIDDEN, "INVALID_API_KEY", "Invalid or inactive API key");
             return;
         }

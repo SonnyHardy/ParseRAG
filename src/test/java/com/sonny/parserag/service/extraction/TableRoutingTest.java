@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableResult;
+import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.service.fallback.GeminiVisionFallbackService;
 import com.sonny.parserag.service.fallback.VisionResponseParser;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,9 @@ class TableRoutingTest {
         return new TableExtractorService(
                 props,
                 new TableRegionDetector(new PageGeometryAnalyzer()),
-                new GeminiVisionFallbackService(props, new VisionResponseParser(new ObjectMapper())));
+                new GeminiVisionFallbackService(props, new VisionResponseParser(new ObjectMapper()),
+                        TestMetrics.metrics()),
+                TestMetrics.metrics());
     }
 
     private byte[] load(String name) throws IOException {

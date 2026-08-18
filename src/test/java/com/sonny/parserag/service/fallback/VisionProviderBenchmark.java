@@ -6,6 +6,8 @@ import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableResult;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.service.extraction.PageGeometryAnalyzer;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
 import com.sonny.parserag.service.extraction.ScannedPageDetector;
@@ -202,9 +204,10 @@ class VisionProviderBenchmark {
 
     private VisionFallback vision(AppProperties props) {
         VisionResponseParser parser = new VisionResponseParser(new ObjectMapper());
+        ParseRagMetrics metrics = TestMetrics.metrics();   // registre en mémoire, aucun export
         return "openai".equals(provider)
-                ? new OpenAiVisionFallbackService(props, parser)
-                : new GeminiVisionFallbackService(props, parser);
+                ? new OpenAiVisionFallbackService(props, parser, metrics)
+                : new GeminiVisionFallbackService(props, parser, metrics);
     }
 
     private String model(AppProperties props) {

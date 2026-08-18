@@ -3,9 +3,11 @@ package com.sonny.parserag.service.ratelimit;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
+import com.sonny.parserag.observability.ParseRagMetrics;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -37,7 +39,17 @@ public class RateLimitService {
     private static final Duration REFILL_WINDOW = Duration.ofMinutes(1);
 
     private final AppProperties appProperties;
+    private final ParseRagMetrics metrics;
     private final ConcurrentHashMap<UUID, PlannedBucket> buckets = new ConcurrentHashMap<>();
+
+    /**
+     * La map n'a aucune éviction : elle grandit avec le nombre de clés vues depuis le démarrage.
+     * Cette gauge est la mesure directe de l'empreinte mémoire que l'issue #35 veut borner.
+     */
+    @PostConstruct
+    void registerMetrics() {
+        metrics.registerBucketsGauge(buckets::size);
+    }
 
     /** Bucket + plan avec lequel il a été construit, pour détecter un changement de plan à chaud. */
     private record PlannedBucket(Plan plan, Bucket bucket) {}

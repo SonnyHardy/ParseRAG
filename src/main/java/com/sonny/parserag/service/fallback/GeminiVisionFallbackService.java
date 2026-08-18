@@ -13,12 +13,16 @@ import com.google.genai.types.Type;
 import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.model.domain.VisionPageResult;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.ParseRagMetrics.Outcome;
+import com.sonny.parserag.observability.ParseRagMetrics.TokenType;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -90,8 +94,12 @@ public class GeminiVisionFallbackService implements VisionFallback {
         String generate(String systemPrompt, String userPrompt, byte[] png, Schema responseSchema);
     }
 
+    /** Tag {@code provider} des métriques vision (issue #38). */
+    private static final String PROVIDER = "gemini";
+
     private final AppProperties appProperties;
     private final VisionResponseParser parser;
+    private final ParseRagMetrics metrics;
 
     /** Non nul uniquement en test : court-circuite {@link #callGemini}. */
     private final GeminiCall call;
@@ -104,14 +112,17 @@ public class GeminiVisionFallbackService implements VisionFallback {
     private volatile Client geminiClient;
 
     @Autowired
-    public GeminiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser) {
-        this(appProperties, parser, null);
+    public GeminiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser,
+                                       ParseRagMetrics metrics) {
+        this(appProperties, parser, metrics, null);
     }
 
     /** Constructeur testable (appel modèle stubbé, aucun réseau). */
-    GeminiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser, GeminiCall call) {
+    GeminiVisionFallbackService(AppProperties appProperties, VisionResponseParser parser,
+                                ParseRagMetrics metrics, GeminiCall call) {
         this.appProperties = appProperties;
         this.parser = parser;
+        this.metrics = metrics;
         this.call = call;
     }
 
@@ -158,12 +169,26 @@ public class GeminiVisionFallbackService implements VisionFallback {
         }
     }
 
-    /** Route vers l'appel stubbé (test) ou vers le vrai appel Gemini. */
+    /**
+     * Route vers l'appel stubbé (test) ou vers le vrai appel Gemini, et relève l'issue + la durée
+     * (issue #38). Instrumenté ici, en un seul point, plutôt que dans {@code extractTable} et
+     * {@code extractPage} séparément. Le {@code finally} garantit que l'appel est compté même quand
+     * il lève — c'est précisément le cas qu'on veut voir sur un graphe.
+     */
     private String generate(String systemPrompt, String userPrompt, byte[] png, Schema schema) {
-        GeminiCall stub = this.call;
-        return stub != null
-                ? stub.generate(systemPrompt, userPrompt, png, schema)
-                : callGemini(systemPrompt, userPrompt, png, schema);
+        long start = System.nanoTime();
+        Outcome outcome = Outcome.FAILURE;
+        try {
+            GeminiCall stub = this.call;
+            String content = stub != null
+                    ? stub.generate(systemPrompt, userPrompt, png, schema)
+                    : callGemini(systemPrompt, userPrompt, png, schema);
+            if (content != null && !content.isBlank()) outcome = Outcome.SUCCESS;
+            return content;
+        } finally {
+            metrics.visionCall(PROVIDER, appProperties.getGemini().getModel(), outcome,
+                    Duration.ofNanos(System.nanoTime() - start));
+        }
     }
 
     /**
@@ -185,12 +210,29 @@ public class GeminiVisionFallbackService implements VisionFallback {
 
         Content content = Content.fromParts(Part.fromText(userPrompt), Part.fromBytes(png, PNG_MIME));
 
-        GenerateContentResponse response =
-                client().models.generateContent(appProperties.getGemini().getModel(), content, config);
+        String model = appProperties.getGemini().getModel();
+        GenerateContentResponse response = client().models.generateContent(model, content, config);
+        recordTokens(model, response);
 
         // text() renvoie null sans candidat, et lève sur un finishReason inattendu (SAFETY,
         // MAX_TOKENS…) : les deux cas sont rattrapés par l'appelant → manual_review.
         return response.text();
+    }
+
+    /**
+     * Tokens facturés par l'appel — c'est la métrique de <em>coût</em> du fallback vision. Relevés
+     * ici parce que c'est le seul endroit qui voit la réponse du SDK ; tous les compteurs sont
+     * optionnels côté API, d'où les {@code ifPresent} en cascade.
+     */
+    private void recordTokens(String model, GenerateContentResponse response) {
+        response.usageMetadata().ifPresent(usage -> {
+            usage.promptTokenCount()
+                    .ifPresent(t -> metrics.visionTokens(PROVIDER, model, TokenType.PROMPT, t));
+            usage.candidatesTokenCount()
+                    .ifPresent(t -> metrics.visionTokens(PROVIDER, model, TokenType.COMPLETION, t));
+            usage.thoughtsTokenCount()
+                    .ifPresent(t -> metrics.visionTokens(PROVIDER, model, TokenType.THOUGHTS, t));
+        });
     }
 
     /** Construit (une fois) puis réutilise le client Gemini à partir de la clé configurée. */

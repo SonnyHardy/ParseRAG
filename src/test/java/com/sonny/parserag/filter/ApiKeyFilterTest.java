@@ -2,7 +2,11 @@ package com.sonny.parserag.filter;
 
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
+import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.repository.ApiKeyRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -43,7 +47,9 @@ class ApiKeyFilterTest {
             "c66e219a7174453210477d9e9f9eb0dda0fbdafa69196f79390b95418ee18fd8";
 
     private final ApiKeyRepository repository = mock(ApiKeyRepository.class);
-    private final ApiKeyFilter filter = new ApiKeyFilter(repository, JsonMapper.builder().build());
+    private final MeterRegistry meters = new SimpleMeterRegistry();
+    private final ApiKeyFilter filter =
+            new ApiKeyFilter(repository, JsonMapper.builder().build(), TestMetrics.metrics(meters));
 
     private static ApiKey adminKey() {
         ApiKey key = new ApiKey();
@@ -178,5 +184,41 @@ class ApiKeyFilterTest {
         Outcome outcome = call("/api/v1/health", "   ");
 
         assertEquals(HttpServletResponse.SC_UNAUTHORIZED, outcome.response().getStatus());
+    }
+
+    // ── Instrumentation (issue #38) ──────────────────────────────────────────
+
+    /**
+     * Les trois motifs d'échec doivent être distingués : « pas de clé » (client mal configuré),
+     * « clé invalide » (potentiellement une attaque) et « base injoignable » (incident de notre
+     * côté) appellent des réactions opposées — un compteur global les confondrait.
+     */
+    @Test
+    void authFailuresAreCountedByReason() throws Exception {
+        call("/api/v1/parse", null);                                   // clé absente
+
+        when(repository.findByKeyHashAndActiveTrue(anyString())).thenReturn(Optional.empty());
+        call("/api/v1/parse", "not-a-real-key");                       // clé inconnue
+
+        when(repository.findByKeyHashAndActiveTrue(anyString()))
+                .thenThrow(new CannotCreateTransactionException("connection refused"));
+        call("/api/v1/parse", RAW_KEY);                                // base injoignable
+
+        assertEquals(1, authFailures("missing_key"));
+        assertEquals(1, authFailures("invalid_key"));
+        assertEquals(1, authFailures("db_unavailable"));
+    }
+
+    @Test
+    void successfulAuthCountsNoFailure() throws Exception {
+        when(repository.findByKeyHashAndActiveTrue(RAW_KEY_HASH)).thenReturn(Optional.of(adminKey()));
+
+        call("/api/v1/parse", RAW_KEY, new MockHttpServletRequest("POST", "/api/v1/parse"));
+
+        assertTrue(meters.find(ParseRagMetrics.AUTH_FAILURES).counters().isEmpty());
+    }
+
+    private double authFailures(String reason) {
+        return meters.get(ParseRagMetrics.AUTH_FAILURES).tag("reason", reason).counter().count();
     }
 }

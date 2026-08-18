@@ -1,6 +1,7 @@
 package com.sonny.parserag.filter;
 
 import com.sonny.parserag.entity.ApiKey;
+import com.sonny.parserag.observability.ParseRagMetrics;
 import com.sonny.parserag.service.ratelimit.RateLimitService;
 import io.github.bucket4j.ConsumptionProbe;
 import jakarta.servlet.FilterChain;
@@ -41,6 +42,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimitService rateLimitService;
     private final ObjectMapper objectMapper;
+    private final ParseRagMetrics metrics;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -65,6 +67,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         response.setHeader("X-RateLimit-Reset", String.valueOf(resetEpochSeconds));
 
         if (!probe.isConsumed()) {
+            metrics.rateLimitRejected(apiKey.getPlan());
             long retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill()).toSeconds();
             writeRateLimited(response, limit, retryAfter);
             return;
