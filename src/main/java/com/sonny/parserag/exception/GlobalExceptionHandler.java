@@ -1,5 +1,6 @@
 package com.sonny.parserag.exception;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -89,9 +90,19 @@ public class GlobalExceptionHandler {
 
     // ── Format d'erreur standard ─────────────────────────────────────────────
 
+    @Schema(name = "ErrorResponse", description = "Uniform error body returned by every endpoint.")
     public record ErrorResponse(
+
+            @Schema(description = "Stable machine-readable code. Branch on this, not on the message.",
+                    example = "FILE_TOO_LARGE")
             String error,
+
+            @Schema(description = "Human-readable explanation. May change between releases.",
+                    example = "File size 63.2 MB exceeds the 50 MB limit.")
             String message,
+
+            @Schema(description = "HTTP status, repeated in the body for clients that only read it.",
+                    example = "413")
             int status
     ) {}
 }

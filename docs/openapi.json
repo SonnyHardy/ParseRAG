@@ -1,0 +1,442 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "contact": {
+            "name": "ParseRAG",
+            "url": "https://github.com/SonnyHardy/ParseRAG"
+        },
+        "description": "ParseRAG turns any PDF into clean, structured JSON for your RAG pipeline.\n\nUpload a PDF, get back embedding-ready chunks: text is extracted column-aware, repeated headers and footers are stripped, tables come back as structured JSON, and scanned pages fall back to a vision model. Every chunk carries a confidence score and a `manual_review_needed` flag, so a low-quality page never enters your index unnoticed.\n\nAuthentication is by API key: send it in the `X-API-Key` header on every request. Rate limits and monthly quotas depend on your plan.",
+        "license": {
+            "name": "Proprietary"
+        },
+        "title": "ParseRAG API",
+        "version": "0.0.1-SNAPSHOT"
+    },
+    "servers": [
+        {
+            "url": "{baseUrl}",
+            "description": "ParseRAG deployment",
+            "variables": {
+                "baseUrl": {
+                    "description": "Base URL of your ParseRAG deployment. Defaults to a local run.",
+                    "default": "http://localhost:8080"
+                }
+            }
+        }
+    ],
+    "security": [
+        {
+            "ApiKeyAuth": []
+        }
+    ],
+    "tags": [
+        {
+            "description": "Turn a PDF into RAG-ready chunks.",
+            "name": "Parsing"
+        },
+        {
+            "description": "Check how much of your monthly quota is left.",
+            "name": "Usage"
+        }
+    ],
+    "paths": {
+        "/api/v1/parse": {
+            "post": {
+                "description": "Uploads a PDF and returns embedding-ready chunks. The pipeline extracts text column-aware, strips repeated headers and footers, extracts tables as structured JSON, and falls back to a vision model on scanned pages.\n\nLimits: 50 MB per file, and a page cap that depends on your plan (100 pages on Free, up to 1000 on Scale). A successful call consumes one document from your monthly quota; failed calls do not.",
+                "operationId": "parsePdf",
+                "requestBody": {
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    }
+                                },
+                                "required": [
+                                    "file"
+                                ]
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ParseResponse"
+                                }
+                            }
+                        },
+                        "description": "PDF parsed successfully."
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "MISSING_FILE, INVALID_FILE_FORMAT (bad PDF signature) or PDF_UNREADABLE (corrupted or encrypted file)."
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "MISSING_API_KEY \u00e2\u0080\u0094 no X-API-Key header."
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "INVALID_API_KEY \u00e2\u0080\u0094 unknown or inactive key."
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "FILE_TOO_LARGE \u00e2\u0080\u0094 over the 50 MB limit."
+                    },
+                    "415": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "INVALID_FILE_FORMAT or UNSUPPORTED_MEDIA_TYPE \u00e2\u0080\u0094 the upload is not a PDF."
+                    },
+                    "422": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "DOCUMENT_TOO_LONG \u00e2\u0080\u0094 more pages than your plan allows."
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "RATE_LIMIT_EXCEEDED (see Retry-After) or QUOTA_EXCEEDED (monthly document quota reached)."
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "INTERNAL_ERROR \u00e2\u0080\u0094 unexpected failure."
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "DATABASE_UNAVAILABLE \u00e2\u0080\u0094 the key could not be verified."
+                    }
+                },
+                "summary": "Parse a PDF into chunks",
+                "tags": [
+                    "Parsing"
+                ]
+            }
+        },
+        "/api/v1/usage": {
+            "get": {
+                "description": "Returns the documents consumed on the current billing cycle, the plan limit,                     and the date the counter resets.\n\nThe cycle is anniversary-based: it is anchored on the day your key was created,                     so `reset_date` is the next occurrence of that day, not the first of the month.                     This endpoint is never blocked by the quota \u00e2\u0080\u0094 you can always read your usage,                     even once the quota is reached.",
+                "operationId": "getUsage",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UsageResponse"
+                                }
+                            }
+                        },
+                        "description": "Current cycle usage."
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "MISSING_API_KEY \u00e2\u0080\u0094 no X-API-Key header."
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "INVALID_API_KEY \u00e2\u0080\u0094 unknown or inactive key."
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "RATE_LIMIT_EXCEEDED \u00e2\u0080\u0094 this endpoint counts against your rate limit."
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "DATABASE_UNAVAILABLE \u00e2\u0080\u0094 the key could not be verified."
+                    }
+                },
+                "summary": "Get current usage",
+                "tags": [
+                    "Usage"
+                ]
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Chunk": {
+                "type": "object",
+                "description": "A unit of text ready to embed into a vector store.",
+                "properties": {
+                    "char_end": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "End offset of the chunk in the page text. 0 for TABLE chunks.",
+                        "example": 1874
+                    },
+                    "char_start": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Start offset of the chunk in the page text. 0 for TABLE chunks.",
+                        "example": 0
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "format": "double",
+                        "description": "Extraction confidence between 0 and 1. Penalised when the reading order looks interleaved or the text carries extraction artefacts.",
+                        "example": 0.94,
+                        "maximum": 1,
+                        "minimum": 0
+                    },
+                    "fallback_used": {
+                        "type": "boolean",
+                        "description": "True when a vision model produced this chunk, because the page was scanned or the table grid was unusable.",
+                        "example": false
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Stable id, sequential within the document.",
+                        "example": "chunk_doc_9f3c1a7b_004"
+                    },
+                    "manual_review_needed": {
+                        "type": "boolean",
+                        "description": "True when confidence fell below the review threshold. Treat these chunks as suspect rather than indexing them blindly.",
+                        "example": false
+                    },
+                    "page": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "1-based page the chunk was taken from.",
+                        "example": 3
+                    },
+                    "table_json": {
+                        "type": "object",
+                        "additionalProperties": {},
+                        "description": "Structured table, present only on TABLE chunks and omitted otherwise. Holds `headers` (array of strings), `rows` (array of row arrays) and, when one was found, `caption`.",
+                        "example": {
+                            "caption": "Table 2: Accuracy by model",
+                            "headers": [
+                                "Model",
+                                "SNLI",
+                                "MultiNLI"
+                            ],
+                            "rows": [
+                                [
+                                    "ESIM+GloVe",
+                                    "51.9",
+                                    "52.7"
+                                ],
+                                [
+                                    "BERT-base",
+                                    "56.3",
+                                    "58.1"
+                                ]
+                            ]
+                        }
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The chunk text. For a TABLE chunk, the table linearised as pipe-separated rows, so it can be embedded as-is."
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "What this chunk holds.",
+                        "enum": [
+                            "PARAGRAPH",
+                            "TABLE",
+                            "FIGURE_CAPTION",
+                            "HEADER_ARTIFACT"
+                        ]
+                    }
+                }
+            },
+            "ErrorResponse": {
+                "type": "object",
+                "description": "Uniform error body returned by every endpoint.",
+                "properties": {
+                    "error": {
+                        "type": "string",
+                        "description": "Stable machine-readable code. Branch on this, not on the message.",
+                        "example": "FILE_TOO_LARGE"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Human-readable explanation. May change between releases.",
+                        "example": "File size 63.2 MB exceeds the 50 MB limit."
+                    },
+                    "status": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "HTTP status, repeated in the body for clients that only read it.",
+                        "example": 413
+                    }
+                }
+            },
+            "ParseResponse": {
+                "type": "object",
+                "description": "Result of a successful parse.",
+                "properties": {
+                    "chunks": {
+                        "type": "array",
+                        "description": "Chunks in reading order, sorted by page. Ready to embed.",
+                        "items": {
+                            "$ref": "#/components/schemas/Chunk"
+                        }
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "description": "Identifier generated for this parse. Prefixes every chunk id.",
+                        "example": "doc_9f3c1a7b"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "ISO 639-1 language code, taken from the PDF metadata when present and otherwise guessed from stop words. One of fr, en, de, es, or unknown.",
+                        "example": "en"
+                    },
+                    "pages": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Number of pages read. Capped by your plan.",
+                        "example": 12
+                    },
+                    "processing_ms": {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Server-side processing time in milliseconds.",
+                        "example": 1843
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Always \"ok\" on a 200. Failures are returned as an error object with an HTTP error status.",
+                        "example": "ok"
+                    }
+                }
+            },
+            "UsageResponse": {
+                "type": "object",
+                "description": "Quota consumption for the current billing cycle.",
+                "properties": {
+                    "docs_limit": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Documents allowed per cycle on this plan.",
+                        "example": 100
+                    },
+                    "docs_remaining": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Documents left before parse calls are rejected with QUOTA_EXCEEDED.",
+                        "example": 63
+                    },
+                    "docs_used": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Documents parsed successfully this cycle.",
+                        "example": 37
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "Cycle identifier, the year-month in which the cycle started.",
+                        "example": "2026-08"
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Plan attached to the key.",
+                        "enum": [
+                            "free",
+                            "starter",
+                            "pro",
+                            "scale"
+                        ],
+                        "example": "free"
+                    },
+                    "reset_date": {
+                        "type": "string",
+                        "description": "Date the counter resets (ISO 8601). Anchored on the day the key was created, not the first of the month.",
+                        "example": "2026-09-14"
+                    }
+                }
+            }
+        },
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "description": "API key issued with your plan. Sent on every request, including GET /api/v1/usage.",
+                "in": "header",
+                "name": "X-API-Key",
+                "type": "apiKey"
+            }
+        }
+    }
+}

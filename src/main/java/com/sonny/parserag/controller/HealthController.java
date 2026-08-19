@@ -4,6 +4,7 @@ import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.exception.ParseRagException;
 import com.sonny.parserag.model.response.HealthResponse;
 import com.sonny.parserag.service.health.HealthService;
+import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,12 @@ import org.springframework.web.bind.annotation.RestController;
  * Réponse : 200 si tous les composants répondent, 503 dès qu'un seul est {@code DOWN} (le corps
  * est le même dans les deux cas, le composant fautif portant {@code DOWN}) — un monitoring lit le
  * code HTTP, un humain lit le corps.
+ * <p>
+ * {@code @Hidden} : absent de la spécification OpenAPI publiée (issue #16). La publier reviendrait
+ * à annoncer à tout consommateur l'existence de l'endpoint, ce que le 404 ci-dessus s'emploie
+ * précisément à taire — la spec est la surface produit, elle ne doit pas contredire le contrôleur.
  */
+@Hidden
 @RestController
 @RequestMapping("/api/v1/health")
 @RequiredArgsConstructor
