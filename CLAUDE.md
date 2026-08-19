@@ -262,6 +262,46 @@ structural — worth re-checking whenever these thresholds move.
 Corpus after both signatures: **0 pages with suspect lines**, manual-review chunks at 8 (all from
 palier 1), table fixtures untouched.
 
+## Table quality gate (issues #9, #26)
+
+`TableExtractorService` extracts each detected region with Tabula, then decides whether to spend a
+**vision call** on it — the call costs ~2.9 s, so the gate arbitrates between two opposite errors:
+firing for nothing, and staying silent on a broken grid.
+
+Two signals route a grid to vision: `semanticQuality` below `parserag.vision.quality-threshold`
+(brevity of cells × absence of singleton rows), or `hasStructuralDefect`.
+
+Structural defects, each earned from a measured failure — `TableQualityBenchmark` sweeps the corpus
+and classifies every call as **INUTILE** (vision output identical to Tabula's) or **REPARATION**:
+
+- **undecoded glyph** anywhere;
+- **header that is really a data row** — two forms: first cell blank with mostly-numeric headers, or
+  first cell a label followed by *decimals*. The decimal test is what separates `ESIM+GloVe | 51.9 |
+  52.7` (a measurement row promoted to header) from `Year | 2018 | 2019` (a legitimate label). An
+  earlier attempt used "contains a digit" and broke both guard tests in `TableExtractorServiceTest`;
+- **hollow column** outside the first;
+- **residual stacked cell** — see below.
+
+### Stacked cells
+
+Tabula joins a multi-line cell's lines with a carriage return, cramming several values into one
+cell: a 4×3 table comes out 2×3, useless for RAG, and *invisible* to the brevity score because each
+stacked piece is short. `buildFromGrid` splits such a row when the cut is **determined** — every
+non-empty cell carries the same number of parts. When the counts diverge, the row mixes merged and
+simple cells: guessing a distribution would be worse than the defect, so the row is left intact and
+flagged, and the vision fallback decides on the image.
+
+Measured on the corpus: stacked tables escaping the gate **4 → 0**, repairs **11 → 14**, needless
+calls **2 → 1**, with 3 tables split at no API cost.
+
+### Why the threshold stays at 0.75
+
+Lowering it to ~0.72 would save the one remaining needless call, but the margin to the highest
+*repair* (0.70) is **0.04 over 5 data points**. Trading a certain small latency gain for an uncertain
+correctness loss is the wrong side of the "accuracy first" call this gate is calibrated on. Re-run
+`TableQualityBenchmark` before revisiting — and note its verdicts depend on a non-deterministic model
+output, so a borderline INUTILE may read REPARATION on another run.
+
 ## Key architectural detail: header/footer cleaning
 
 Lives entirely in the package `com.sonny.parserag.service.headerfooter`, designed as **stacked

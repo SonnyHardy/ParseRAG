@@ -65,6 +65,20 @@ public class TableExtractorService {
     private static final int MAX_CELL_WORDS = 4;
     private static final int MAX_CELL_CHARS = 28;
 
+    /**
+     * Séparateur d'empilement : Tabula rend une cellule multi-lignes en joignant ses lignes par un
+     * retour chariot, ce qui empile plusieurs valeurs dans une seule cellule (issue #26).
+     */
+    private static final Pattern STACKED_CELL = Pattern.compile("[\r\n]+");
+
+    /**
+     * Une cellule qui est une <em>valeur décimale</em> (« 51.9 », « 92,2 % »). Un en-tête de colonne
+     * peut légitimement être un entier — une année, une taille, un nombre de couches — mais
+     * quasiment jamais un décimal : celui-ci trahit une ligne de mesures promue en en-tête.
+     */
+    private static final Pattern DECIMAL_VALUE =
+            Pattern.compile("[-+]?\\d+[.,]\\d+\\s*%?");
+
     /** Un token/cellule « numérique » contient au moins un chiffre. */
     private static final Pattern HAS_DIGIT = Pattern.compile(".*\\d.*");
     /** Caractère de remplacement Unicode (glyphe non décodé) : signe d'extraction défaillante. */
@@ -223,6 +237,14 @@ public class TableExtractorService {
             while (r.size() < width) r.add("");
             grid.add(r);
         }
+        // 1b. Éclater les cellules multi-lignes (issue #26). Tabula empile plusieurs valeurs dans
+        //     une seule cellule quand il ne sait pas où couper : la table sort alors 2x3 là où elle
+        //     est 4x3 — inexploitable en RAG, et invisible au score de brièveté puisque chaque
+        //     morceau empilé est court.
+        List<List<String>> expanded = new ArrayList<>();
+        for (List<String> row : grid) expanded.addAll(splitStackedRow(row));
+        grid = expanded;
+
         // 2. Retirer les lignes entièrement vides.
         grid.removeIf(r -> r.stream().allMatch(String::isEmpty));
         // 3. Retirer les colonnes entièrement vides.
@@ -307,6 +329,43 @@ public class TableExtractorService {
     }
 
     /**
+     * Éclate une ligne dont les cellules empilent plusieurs valeurs, quand le découpage est
+     * <strong>décidable sans deviner</strong> : toutes les cellules non vides doivent porter le
+     * même nombre de parties.
+     *
+     * <p>Dès que les comptes divergent, la ligne mêle cellules fusionnées et cellules simples : la
+     * répartition n'est plus déterminée, et l'inventer serait pire que le défaut. On rend alors la
+     * ligne telle quelle — {@link #hasStructuralDefect} la signale et le fallback vision tranche
+     * sur l'image, qui porte l'information que la grille a perdue.
+     */
+    private List<List<String>> splitStackedRow(List<String> row) {
+        int parts = -1;
+        for (String cell : row) {
+            if (cell == null || cell.isBlank()) continue;
+            int count = STACKED_CELL.split(cell).length;
+            if (count < 2) return List.of(row);              // une cellule simple : pas d'éclatement
+            if (parts == -1) parts = count;
+            else if (parts != count) return List.of(row);    // comptes divergents : indécidable
+        }
+        if (parts < 2) return List.of(row);
+
+        List<List<String>> out = new ArrayList<>(parts);
+        for (int i = 0; i < parts; i++) {
+            List<String> line = new ArrayList<>(row.size());
+            for (String cell : row) {
+                if (cell == null || cell.isBlank()) {
+                    line.add("");
+                } else {
+                    String[] pieces = STACKED_CELL.split(cell);
+                    line.add(i < pieces.length ? pieces[i].strip() : "");
+                }
+            }
+            out.add(line);
+        }
+        return out;
+    }
+
+    /**
      * Défauts de <em>structure</em> que le score de brièveté ne voit pas, et qui justifient le fallback
      * vision même sur une grille « pleine » et « brève » :
      * <ol>
@@ -327,10 +386,13 @@ public class TableExtractorService {
         if (containsReplacementChar(headers)) return true;
         for (List<String> r : rows) if (containsReplacementChar(r)) return true;
 
-        // 2. En-tête majoritairement numérique ET 1ʳᵉ cellule vide : signature d'une ligne d'en-tête
-        //    mal alignée (ligne de données/tailles happée comme en-tête). La garde « 1ʳᵉ cellule vide »
-        //    épargne les tables à en-têtes légitimement numériques (années, tailles, # couches) dont
-        //    la colonne de libellés est étiquetée → évite le faux positif.
+        // 2. En-tête majoritairement numérique : signature d'une ligne de données promue en
+        //    en-tête, la vraie ligne d'en-tête ayant été ratée. Deux formes rencontrées :
+        //    la 1ʳᵉ cellule est vide (tailles happées, ex. bert p6 « 392k… »), ou elle porte un
+        //    libellé non numérique suivi de valeurs (ex. bert p7 SWAG « ESIM+GloVe | 51.9 | 52.7 »,
+        //    où la ligne d'en-tête « System | Dev | Test » a disparu).
+        //    La garde « 1ʳᵉ cellule vide » épargne les tables à en-têtes légitimement numériques
+        //    (années, tailles, # couches) dont la colonne de libellés est étiquetée.
         String first = headers.getFirst();
         boolean firstBlank = first == null || first.isBlank();
         long headerNonEmpty = headers.stream().filter(s -> s != null && !s.isBlank()).count();
@@ -342,13 +404,38 @@ public class TableExtractorService {
             return true;
         }
 
-        // 3. Colonne creuse (hors 1ʳᵉ colonne, souvent le libellé de ligne).
+        // 2b. Même défaut, forme « libellé + mesures » : la 1ʳᵉ cellule porte un libellé et les
+        //     autres en-têtes sont des DÉCIMAUX (ex. bert p7 SWAG « ESIM+GloVe | 51.9 | 52.7 », où
+        //     la ligne « System | Dev | Test » a disparu). Le critère décimal est ce qui sépare ce
+        //     cas d'un en-tête légitimement numérique : « Year | 2018 | 2019 » est une étiquette
+        //     plausible, « 51.9 » ne l'est pas.
+        boolean firstIsLabel = !firstBlank && !HAS_DIGIT.matcher(first).matches();
+        long headerDecimal = headers.stream()
+                .filter(h -> h != null && DECIMAL_VALUE.matcher(h.strip()).matches())
+                .count();
+        if (firstIsLabel && cols >= 3 && headerNonEmpty > 1
+                && (double) headerDecimal / (headerNonEmpty - 1) >= NUMERIC_HEADER_RATIO) {
+            return true;
+        }
+
+        // 3. Empilement résiduel : l'éclatement de buildFromGrid n'a pas su trancher (comptes de
+        //    parties divergents). La grille contient donc des valeurs agglomérées — seule l'image
+        //    porte encore l'information perdue.
+        if (containsStackedCell(headers)) return true;
+        for (List<String> r : rows) if (containsStackedCell(r)) return true;
+
+        // 4. Colonne creuse (hors 1ʳᵉ colonne, souvent le libellé de ligne).
         int total = rows.size() + 1;   // en-tête + données
         for (int c = 1; c < cols; c++) {
             int filled = isCellFilled(headers, c) ? 1 : 0;
             for (List<String> r : rows) if (isCellFilled(r, c)) filled++;
             if ((double) filled / total <= HOLLOW_COLUMN_FILL) return true;
         }
+        return false;
+    }
+
+    private boolean containsStackedCell(List<String> cells) {
+        for (String c : cells) if (c != null && STACKED_CELL.matcher(c).find()) return true;
         return false;
     }
 
