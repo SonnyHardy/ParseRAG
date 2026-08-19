@@ -86,7 +86,7 @@ public class AppProperties {
         private int maxRetries = 4;
     }
 
-    /** Fallback vision par défaut depuis l'issue #28 (Gemini 2.5 Flash-Lite). */
+    /** Fallback vision par défaut depuis l'issue #28 (Gemini Flash-Lite). */
     @Data
     public static class Gemini {
         /**
@@ -97,8 +97,16 @@ public class AppProperties {
         /**
          * Tag stable, jamais une variante {@code -preview-*} ni un alias mouvant
          * ({@code gemini-flash-lite-latest}) : un modèle qui change ou disparaît fait basculer tout
-         * un document en revue manuelle. {@code gemini-2.5-flash-lite}, visé à l'ouverture de
-         * l'issue #28, est refusé (404) aux comptes récents — d'où le Flash-Lite courant.
+         * un document en revue manuelle.
+         * <p><strong>Ne pas retenter {@code gemini-2.5-flash-lite}</strong> (visé à l'ouverture de
+         * l'issue #28, réexaminé en #48 pour son tarif 3 à 6 fois inférieur). Mesuré le 20/08/2026 :
+         * {@code generateContent} répond <em>404 — « no longer available to new users. Please
+         * update your code to use models/gemini-3.5-flash-lite »</em>. Toute la génération 2.5 est
+         * fermée aux comptes qui ne l'utilisaient pas déjà ; ce n'est pas une question d'ancienneté
+         * de compte ni de région, et aucune option de configuration ne la rouvre.
+         * <p>Piège : {@code GET /v1beta/models/gemini-2.5-flash-lite} répond <em>200</em> et le
+         * modèle figure au catalogue — seul l'appel de génération révèle le refus. Vérifier un accès
+         * modèle par un {@code generateContent} réel, jamais par la lecture de métadonnées.
          */
         private String model = "gemini-3.5-flash-lite";
         /**
