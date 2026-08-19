@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -65,17 +64,74 @@ public class PdfTextExtractorService {
     private static final float   LINE_NUMBER_MONOTONIC_MIN = 0.70f;
 
     // ── Ordre de lecture : détection des lignes suspectes (issue #30, palier 3) ──────────
-    /** Saut X arrière entre deux lignes (en ratio de la largeur de page) au-delà duquel une ligne est suspecte. */
-    private static final float BACKWARD_JUMP_MIN_RATIO = 0.10f;
     /** En deçà de ce nombre de lignes, la page est trop courte pour juger son ordre de lecture. */
     private static final int   READING_ORDER_MIN_LINES = 5;
     /** Longueur minimale d'une ligne suspecte retenue (évite les faux appariements sur des lignes très courtes). */
     private static final int   MIN_SUSPECT_LINE_LEN    = 5;
+    /**
+     * Tolérance (pt) de regroupement des X de début de ligne en « ancres ». Large à dessein : le
+     * bord d'une colonne n'est pas parfaitement régulier (chasse du premier glyphe, lignes
+     * légèrement indentées). Mesuré : à 5 pt, l'ancre de la colonne droite de resnet p5 se
+     * fragmentait en trois (297, 305, 309), chacune passant sous le seuil de représentativité.
+     */
+    private static final float ANCHOR_TOLERANCE_PT = 20f;
+    /** Écart minimal (ratio de la largeur) entre deux ancres pour qu'elles puissent être deux colonnes. */
+    private static final float MIN_ANCHOR_SEPARATION_RATIO = 0.15f;
+    /** Part minimale des lignes portée par chacune des deux ancres retenues. */
+    private static final float MIN_ANCHOR_SHARE = 0.20f;
+    /** Nombre minimal de bascules gauche↔droite : c'est la répétition qui signe l'entrelacement. */
+    private static final int   MIN_ALTERNATIONS = 4;
+
+    /**
+     * Nombre maximal de ré-assemblages tentés quand l'ordre de lecture produit se révèle entrelacé
+     * (issue #31). Borné par construction : une boucle « jusqu'à ce que ce soit propre » ne
+     * terminerait pas sur une page pathologique. Une tentative coûte ~0,2 ms (le PDF n'est pas
+     * relu, seuls l'histogramme et le tri sont rejoués sur des fragments déjà en mémoire).
+     */
+    private static final int   MAX_REASSEMBLY_ATTEMPTS = 3;
+
+    // ── Seconde signature : colonnes fusionnées dans une même ligne ──────────────────────
+    /**
+     * Écart interne (pt) à partir duquel un blanc dans une ligne cesse d'être une espace mot. Une
+     * espace vaut ~5 pt, une gouttière ~12 pt et plus.
+     */
+    private static final float MERGED_COLUMN_MIN_GAP_PT = 12f;
+    /**
+     * Part des lignes devant présenter le blanc à la <em>même</em> abscisse. Élevée à dessein :
+     * une gouttière traverse presque tout le corps de la page, alors qu'un tableau n'occupe qu'une
+     * partie des lignes — c'est ce qui les distingue.
+     */
+    private static final float MERGED_COLUMN_MIN_SHARE = 0.50f;
 
     /** Texte reconstruit d'une page + ses lignes suspectes d'ordre de lecture (texte exact). */
     private record PageExtraction(String text, Set<String> reorderSuspectLines) {}
     /** Résultat d'assemblage : texte + X et texte de chaque ligne, dans l'ordre de lecture produit. */
-    private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts) {}
+    private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts,
+                             List<Float> lineGapX) {
+
+        static Assembled empty() {
+            return new Assembled("", List.of(), List.of(), List.of());
+        }
+    }
+
+    /**
+     * Verdict de l'oracle d'ordre de lecture : les lignes suspectes, et — quand un entrelacement est
+     * reconnu — l'abscisse où passerait la gouttière. L'oracle ne fait pas que détecter, il
+     * <em>localise</em> : c'est ce qui permet à la boucle de vérification de proposer un découpage
+     * alternatif au lieu de tâtonner.
+     */
+    private record ReadingOrder(Set<String> suspectLines, float splitEstimate) {
+
+        static final ReadingOrder CLEAN = new ReadingOrder(Set.of(), Float.NaN);
+
+        boolean interleaved() {
+            return !suspectLines.isEmpty();
+        }
+
+        boolean hasSplitEstimate() {
+            return !Float.isNaN(splitEstimate);
+        }
+    }
 
     private final AppProperties appProperties;
     private final PageGeometryAnalyzer pageGeometryAnalyzer;
@@ -190,56 +246,279 @@ public class PdfTextExtractorService {
             if (fragments.isEmpty()) return new PageExtraction("", Set.of());
         }
 
-        float[] splits = pageGeometryAnalyzer.columnSplits(fragments, pageWidth, pageHeight);
+        List<Band> bands = pageGeometryAnalyzer.columnBands(fragments, pageWidth, pageHeight);
+        Assembled assembled = assembleAsBands(bands, pageNum);
+        ReadingOrder verdict = analyseReadingOrder(assembled, pageWidth);
 
-        Assembled assembled;
-        Set<String> suspectLines;
-        if (splits.length == 0) {
-            // Pas de gouttière détectée → assemblage mono-colonne. C'est ICI que deux colonnes mal
-            // séparées s'entrelacent (cf. BERT p.1). On relève les lignes en désordre sur ce flux.
-            assembled = assembleAsSingleColumn(fragments);
-            suspectLines = computeSuspectLines(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
-        } else {
-            assembled = assembleAsColumns(fragments, splits);
-
-            // Fallback : sur les pages détectées comme tableaux, le découpage par colonnes
-            // massacre la structure. On bascule en mono-colonne (tri Y → X global).
-            if (looksLikeTable(assembled.text())) {
-                log.debug("Page {} — tabular layout detected, falling back to mono-column", pageNum);
-                assembled = assembleAsSingleColumn(fragments);
-            } else {
-                log.debug("Page {} — {} columns detected, splits at {}",
-                        pageNum, splits.length + 1, Arrays.toString(splits));
-            }
-            // Colonnes correctement séparées (assemblées colonne par colonne) : on fait confiance à
-            // l'ordre. Le bruit local d'une figure relève du palier 1, pas d'une anomalie de lecture.
-            suspectLines = Set.of();
+        if (log.isDebugEnabled() && bands.stream().anyMatch(b -> b.columns() > 1)) {
+            log.debug("Page {} — {} band(s): {}", pageNum, bands.size(),
+                    bands.stream().map(b -> b.columns() + "col/" + b.rows() + "r").toList());
         }
 
-        return new PageExtraction(assembled.text(), suspectLines);
+        // La géométrie propose, l'ordre de lecture dispose : si le texte produit porte la signature
+        // d'un entrelacement, c'est que le découpage était faux — on réessaie plutôt que de livrer
+        // deux colonnes cousues.
+        if (verdict.interleaved()) {
+            assembled = reassembleUntilReadable(fragments, assembled, verdict, pageWidth, pageHeight, pageNum);
+            verdict = analyseReadingOrder(assembled, pageWidth);
+        }
+
+        return new PageExtraction(assembled.text(), verdict.suspectLines());
     }
 
     /**
-     * Lignes en désordre d'ordre de lecture (palier 3), détectées sur le flux mono-colonne. Sur la
-     * suite des X de début de chaque ligne <em>dans l'ordre de lecture produit</em>, une ligne est
-     * <strong>suspecte</strong> si elle démarre par un <em>saut X arrière anormal</em> (nettement à
-     * gauche de la ligne précédente) : rare sur une vraie mono-colonne, systématique quand
-     * l'assemblage a entrelacé deux colonnes (retour gauche après une ligne de la colonne droite).
-     * Le texte exact de ces lignes est renvoyé pour permettre leur attribution par chunk au chunking.
+     * Boucle de vérification (issue #31) : ré-assemble la page avec des découpages alternatifs tant
+     * que l'ordre de lecture trahit un entrelacement, et garde le meilleur essai.
+     *
+     * <p><strong>Pourquoi une boucle plutôt qu'un meilleur seuil.</strong> Un seuil est calibré sur
+     * un corpus et parie que le document suivant lui ressemble ; une vérification contrôle la sortie
+     * réelle et ne présume rien de la mise en page. C'est ce qui rend l'extraction robuste à des
+     * documents jamais vus.
+     *
+     * <p>Bornée à {@link #MAX_REASSEMBLY_ATTEMPTS} essais : jamais « jusqu'à ce que ce soit propre »,
+     * qui ne terminerait pas sur une page pathologique. Si aucun essai n'est propre, on garde le
+     * moins mauvais et ses lignes suspectes subsistent — l'échec reste <em>visible</em> en aval
+     * (confiance abaissée, {@code manual_review}) plutôt que silencieusement livré.
+     *
+     * <p>Coût : le PDF n'est pas relu. Seuls l'histogramme et le tri sont rejoués sur des fragments
+     * déjà en mémoire, soit ~0,2 ms par essai contre ~10 ms pour lire la page.
      */
-    private Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
-        int n = lineStartX.size();
-        if (n < READING_ORDER_MIN_LINES) return Set.of();
+    private Assembled reassembleUntilReadable(List<Fragment> fragments, Assembled nominal,
+                                              ReadingOrder nominalVerdict, float pageWidth,
+                                              float pageHeight, int pageNum) {
+        Assembled best = nominal;
+        int bestScore = nominalVerdict.suspectLines().size();
 
-        float threshold = pageWidth * BACKWARD_JUMP_MIN_RATIO;
+        for (float split : reassemblyCandidates(fragments, nominalVerdict, pageWidth, pageHeight)) {
+            Assembled attempt = assembleAsColumns(fragments, new float[]{split});
+            // Un découpage qui transforme la page en structure tabulaire a coupé un tableau en
+            // deux plutôt que séparé deux colonnes : on l'écarte quoi qu'en dise le score.
+            if (looksLikeTable(attempt.text())) continue;
+            int score = analyseReadingOrder(attempt, pageWidth).suspectLines().size();
+            if (score < bestScore) {
+                best = attempt;
+                bestScore = score;
+            }
+            if (bestScore == 0) break;
+        }
+
+        if (bestScore < nominalVerdict.suspectLines().size()) {
+            log.debug("Page {} — reading order recovered by re-assembly ({} → {} suspect lines)",
+                    pageNum, nominalVerdict.suspectLines().size(), bestScore);
+        } else {
+            log.debug("Page {} — still interleaved after {} attempt(s), {} suspect lines kept",
+                    pageNum, MAX_REASSEMBLY_ATTEMPTS, bestScore);
+        }
+        return best;
+    }
+
+    /**
+     * Découpages à essayer, par ordre de crédibilité décroissante : d'abord la gouttière déduite de
+     * l'entrelacement lui-même (l'oracle sait où sont les deux bords de colonne), puis les
+     * gouttières plausibles que la géométrie avait repérées mais écartées par prudence.
+     */
+    private List<Float> reassemblyCandidates(List<Fragment> fragments, ReadingOrder verdict,
+                                             float pageWidth, float pageHeight) {
+        List<Float> candidates = new ArrayList<>(MAX_REASSEMBLY_ATTEMPTS);
+        if (verdict.hasSplitEstimate()) candidates.add(verdict.splitEstimate());
+
+        for (float gutter : pageGeometryAnalyzer.candidateGutters(fragments, pageWidth, pageHeight)) {
+            if (candidates.size() >= MAX_REASSEMBLY_ATTEMPTS) break;
+            boolean alreadyCovered = candidates.stream()
+                    .anyMatch(c -> Math.abs(c - gutter) < MIN_ANCHOR_SEPARATION_RATIO * pageWidth);
+            if (!alreadyCovered) candidates.add(gutter);
+        }
+        return candidates;
+    }
+
+    /**
+     * Assemble la page bande par bande, dans l'ordre de lecture (issue #31) : chaque bande est
+     * rendue selon <em>sa</em> structure — mono-colonne pour un bandeau titre ou une légende pleine
+     * largeur, colonne par colonne pour le corps — puis les bandes sont concaténées de haut en bas.
+     */
+    private Assembled assembleAsBands(List<Band> bands, int pageNum) {
+        StringBuilder out = new StringBuilder(8192);
+        List<Float>  lineStartX = new ArrayList<>();
+        List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
+
+        for (Band band : bands) {
+            Assembled part = band.columns() == 1
+                    ? assembleAsSingleColumn(band.fragments())
+                    : assembleAsColumns(band.fragments(), band.splits());
+
+            // Sur une bande tabulaire, le découpage en colonnes massacre la structure : les cellules
+            // d'une même ligne partiraient dans des colonnes distinctes. On y revient au tri global.
+            if (band.columns() > 1 && looksLikeTable(part.text())) {
+                log.debug("Page {} — tabular band detected, falling back to mono-column", pageNum);
+                part = assembleAsSingleColumn(band.fragments());
+            }
+
+            if (part.text().isBlank()) continue;
+            if (!out.isEmpty()) out.append('\n');
+            out.append(part.text());
+            lineStartX.addAll(part.lineStartX());
+            lineTexts.addAll(part.lineTexts());
+            lineGapX.addAll(part.lineGapX());
+        }
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts, lineGapX);
+    }
+
+    /**
+     * Lignes en désordre d'ordre de lecture (palier 3), relevées sur le flux mono-colonne.
+     *
+     * <p>Ne retient que la <strong>signature</strong> de l'entrelacement : une alternance répétée
+     * entre deux positions X <em>stables</em> et nettement séparées — la trace que laissent deux
+     * colonnes cousues ligne à ligne. Un simple « saut arrière », critère de la première version,
+     * ne suffit pas : un listing de code, une liste à puces, une équation centrée ou un tableau en
+     * produisent constamment sans le moindre entrelacement. Mesuré sur le corpus, ce critère naïf
+     * n'avait raison qu'une fois sur cinq (213 pages mono signalées à tort) ; la signature
+     * bimodale porte la précision à 97 %.
+     *
+     * <p>Le texte exact des lignes est renvoyé pour permettre leur attribution par chunk au
+     * chunking.
+     */
+    Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
+        return analyseAlternatingColumns(lineStartX, lineTexts, pageWidth).suspectLines();
+    }
+
+    /**
+     * Verdict complet sur un assemblage : cherche les <strong>deux</strong> signatures
+     * d'entrelacement, et renvoie dans les deux cas l'abscisse de gouttière déduite.
+     *
+     * <p>Deux colonnes cousues laissent deux traces distinctes selon que leurs lignes de base
+     * coïncident ou non : si elles diffèrent, les débuts de ligne <em>alternent</em> ; si elles
+     * coïncident, les colonnes fusionnent <em>dans</em> la même ligne, séparées par un large blanc
+     * interne. Une seule des deux se voit à la fois, d'où l'examen en cascade.
+     */
+    private ReadingOrder analyseReadingOrder(Assembled assembled, float pageWidth) {
+        ReadingOrder alternating = analyseAlternatingColumns(
+                assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+        if (alternating.interleaved()) return alternating;
+        return analyseMergedColumns(assembled.lineGapX(), assembled.lineTexts(), pageWidth);
+    }
+
+    /** Première signature : les débuts de ligne alternent entre deux bords de colonne. */
+    private ReadingOrder analyseAlternatingColumns(List<Float> lineStartX, List<String> lineTexts,
+                                                   float pageWidth) {
+        int n = Math.min(lineStartX.size(), lineTexts.size());
+        if (n < READING_ORDER_MIN_LINES) return ReadingOrder.CLEAN;
+
+        List<float[]> anchors = anchors(lineStartX, n);
+        if (anchors.size() < 2) return ReadingOrder.CLEAN;
+
+        int required = (int) Math.ceil(MIN_ANCHOR_SHARE * n);
+        float[] dominant = anchors.getFirst();
+        if (dominant[1] < required) return ReadingOrder.CLEAN;
+
+        // La seconde ancre est la plus fréquente *suffisamment éloignée* de la première — et non la
+        // deuxième du classement : sur une colonne à deux niveaux d'indentation, les deux premières
+        // seraient toutes deux à gauche et la vraie colonne opposée serait ignorée.
+        float[] opposite = null;
+        for (int i = 1; i < anchors.size(); i++) {
+            float[] candidate = anchors.get(i);
+            if (candidate[1] >= required
+                    && Math.abs(candidate[0] - dominant[0]) >= MIN_ANCHOR_SEPARATION_RATIO * pageWidth) {
+                opposite = candidate;
+                break;
+            }
+        }
+        if (opposite == null) return ReadingOrder.CLEAN;
+
+        float left  = Math.min(dominant[0], opposite[0]);
+        float right = Math.max(dominant[0], opposite[0]);
+
+        // Côté de chaque ligne : 0 = ancre gauche, 1 = ancre droite, -1 = ni l'une ni l'autre.
+        int[] side = new int[n];
+        int alternations = 0;
+        int previous = -1;
+        for (int i = 0; i < n; i++) {
+            float x = lineStartX.get(i);
+            side[i] = Math.abs(x - left) <= ANCHOR_TOLERANCE_PT ? 0
+                    : Math.abs(x - right) <= ANCHOR_TOLERANCE_PT ? 1
+                    : -1;
+            if (side[i] >= 0) {
+                if (previous >= 0 && previous != side[i]) alternations++;
+                previous = side[i];
+            }
+        }
+        // Un aller-retour isolé (une figure, un encadré) n'est pas un entrelacement : il en faut
+        // la répétition.
+        if (alternations < MIN_ALTERNATIONS) return ReadingOrder.CLEAN;
+
         Set<String> suspect = new HashSet<>();
         for (int i = 1; i < n; i++) {
-            if (lineStartX.get(i - 1) - lineStartX.get(i) > threshold) {
+            if (side[i] == 0 && side[i - 1] == 1) {          // retour à gauche après la colonne droite
                 String line = lineTexts.get(i).strip();
                 if (line.length() >= MIN_SUSPECT_LINE_LEN) suspect.add(line);
             }
         }
-        return suspect;
+        // Le milieu des deux bords de colonne : il tombe forcément entre les deux colonnes, donc
+        // sépare correctement leurs fragments par leur milieu.
+        return new ReadingOrder(suspect, (left + right) / 2f);
+    }
+
+    /**
+     * Seconde signature : les deux colonnes ont fusionné <em>dans</em> la même ligne. Quand leurs
+     * lignes de base coïncident, l'assemblage mono les concatène au lieu de les alterner, laissant
+     * un blanc large et récurrent à la position de la gouttière (le symptôme
+     * « customiza-&nbsp;&nbsp;&nbsp;&nbsp;lack the necessary » de l'issue #31).
+     *
+     * <p>Un tableau produit lui aussi des blancs internes alignés : deux gardes l'en distinguent.
+     * D'une part le blanc doit se retrouver sur au moins {@link #MERGED_COLUMN_MIN_SHARE} des
+     * lignes — une gouttière traverse tout le corps, un tableau n'occupe qu'une partie de la page.
+     * D'autre part le ré-assemblage qui suivra est rejeté s'il produit une structure tabulaire.
+     */
+    private ReadingOrder analyseMergedColumns(List<Float> lineGapX, List<String> lineTexts,
+                                              float pageWidth) {
+        int n = Math.min(lineGapX.size(), lineTexts.size());
+        if (n < READING_ORDER_MIN_LINES) return ReadingOrder.CLEAN;
+
+        List<Float> gaps = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            if (!Float.isNaN(lineGapX.get(i))) gaps.add(lineGapX.get(i));
+        }
+        if (gaps.size() < Math.ceil(MERGED_COLUMN_MIN_SHARE * n)) return ReadingOrder.CLEAN;
+
+        // Les blancs doivent se regrouper autour d'une MÊME abscisse : c'est ce qui fait une
+        // gouttière plutôt qu'une ponctuation de mise en page dispersée.
+        List<float[]> clusters = anchors(gaps, gaps.size());
+        float[] dominant = clusters.getFirst();
+        if (dominant[1] < Math.ceil(MERGED_COLUMN_MIN_SHARE * n)) return ReadingOrder.CLEAN;
+
+        Set<String> suspect = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            float gapX = lineGapX.get(i);
+            if (!Float.isNaN(gapX) && Math.abs(gapX - dominant[0]) <= ANCHOR_TOLERANCE_PT) {
+                String line = lineTexts.get(i).strip();
+                if (line.length() >= MIN_SUSPECT_LINE_LEN) suspect.add(line);
+            }
+        }
+        if (suspect.isEmpty()) return ReadingOrder.CLEAN;
+        return new ReadingOrder(suspect, dominant[0]);
+    }
+
+    /**
+     * Regroupe les X de début de ligne en ancres (position moyenne + effectif), triées par
+     * effectif décroissant. Une ancre = un bord de colonne récurrent.
+     */
+    private List<float[]> anchors(List<Float> lineStartX, int n) {
+        List<float[]> anchors = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            float x = lineStartX.get(i);
+            float[] match = null;
+            for (float[] anchor : anchors) {
+                if (Math.abs(anchor[0] - x) <= ANCHOR_TOLERANCE_PT) { match = anchor; break; }
+            }
+            if (match == null) {
+                anchors.add(new float[]{x, 1});
+            } else {
+                match[0] = (match[0] * match[1] + x) / (match[1] + 1);   // moyenne glissante
+                match[1]++;
+            }
+        }
+        anchors.sort((a, b) -> Float.compare(b[1], a[1]));
+        return anchors;
     }
 
     // =========================================================================
@@ -380,7 +659,7 @@ public class PdfTextExtractorService {
      * entre fragments d'une même ligne.
      */
     private Assembled assembleAsSingleColumn(List<Fragment> fragments) {
-        if (fragments.isEmpty()) return new Assembled("", List.of(), List.of());
+        if (fragments.isEmpty()) return Assembled.empty();
 
         List<Fragment> sorted = new ArrayList<>(fragments);
         sorted.sort(Comparator.comparingDouble(Fragment::y)
@@ -389,8 +668,11 @@ public class PdfTextExtractorService {
         StringBuilder out = new StringBuilder(8192);
         List<Float>  lineStartX = new ArrayList<>();
         List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
         StringBuilder line = new StringBuilder();
         Fragment prev = null;
+        float widestGap = 0f;
+        float widestGapX = Float.NaN;
 
         for (Fragment f : sorted) {
             if (prev == null) {
@@ -398,11 +680,21 @@ public class PdfTextExtractorService {
                 line.append(f.text());
                 lineStartX.add(f.xStart());
             } else if (Math.abs(f.y() - prev.y()) <= SAME_LINE_TOLERANCE_PT) {
+                // Écart interne : deux colonnes fusionnées dans une même ligne laissent ici
+                // un blanc bien plus large qu'une espace mot. On retient le plus large de la ligne.
+                float gap = f.xStart() - prev.xEnd();
+                if (gap > widestGap) {
+                    widestGap = gap;
+                    widestGapX = (prev.xEnd() + f.xStart()) / 2f;
+                }
                 String sp = interFragmentSpacing(prev, f);
                 out.append(sp).append(f.text());
                 line.append(sp).append(f.text());
             } else {
                 lineTexts.add(line.toString());
+                lineGapX.add(widestGap >= MERGED_COLUMN_MIN_GAP_PT ? widestGapX : Float.NaN);
+                widestGap = 0f;
+                widestGapX = Float.NaN;
                 line.setLength(0);
                 out.append('\n').append(f.text());
                 line.append(f.text());
@@ -410,8 +702,11 @@ public class PdfTextExtractorService {
             }
             prev = f;
         }
-        if (prev != null) lineTexts.add(line.toString());
-        return new Assembled(out.toString().strip(), lineStartX, lineTexts);
+        if (prev != null) {
+            lineTexts.add(line.toString());
+            lineGapX.add(widestGap >= MERGED_COLUMN_MIN_GAP_PT ? widestGapX : Float.NaN);
+        }
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts, lineGapX);
     }
 
     /**
@@ -434,6 +729,7 @@ public class PdfTextExtractorService {
         StringBuilder out = new StringBuilder(8192);
         List<Float>  lineStartX = new ArrayList<>();
         List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
         for (List<Fragment> bucket : buckets) {
             Assembled col = assembleAsSingleColumn(bucket);
             if (col.text().isBlank()) continue;
@@ -441,8 +737,9 @@ public class PdfTextExtractorService {
             out.append(col.text());
             lineStartX.addAll(col.lineStartX());
             lineTexts.addAll(col.lineTexts());
+            lineGapX.addAll(col.lineGapX());
         }
-        return new Assembled(out.toString(), lineStartX, lineTexts);
+        return new Assembled(out.toString(), lineStartX, lineTexts, lineGapX);
     }
 
     /**

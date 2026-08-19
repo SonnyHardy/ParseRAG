@@ -55,7 +55,8 @@ untouched — editing an applied migration breaks Flyway checksum validation).
 
 1. **Validate** — magic bytes (`%PDF`), content-type, 50 MB cap (`ParsePipelineService`).
 2. **Extract** — `PdfTextExtractorService.extract(bytes, plan)` parses with PDFBox once per page and
-   re-assembles text in memory. Page count is capped per plan (`AppProperties.PageLimits.forPlan`).
+   re-assembles text in memory, **band by band** (see below). Page count is capped per plan
+   (`AppProperties.PageLimits.forPlan`).
 3. **Clean** — `HeaderFooterCleaningService.clean(bytes, doc)` strips repeating headers/footers.
 4. **Chunk** — `ChunkingService.chunk(doc)` produces `List<Chunk>`.
 5. Return `ParseResponse.ok(...)`.
@@ -155,6 +156,106 @@ consumers — it is orthogonal to the provider.
 annotate with `@ConditionalOnProperty(... havingValue = "<name>")`. Do not mock the vendor SDK client
 in tests — both SDKs expose `final` classes (and `com.google.genai.Client.models` is a public field,
 so a Mockito mock leaves it null); inject a small functional seam instead, as `GeminiCall` does.
+
+## Column detection: bands, not a page-wide gutter (issue #31)
+
+`PageGeometryAnalyzer` is the single source of truth for page geometry, shared by text extraction
+and table-region detection so both see the same columns.
+
+A page is **not** "N columns" — it is a stack of zones: full-width title banner, then two columns,
+then a full-width figure caption, then two columns again. `columnBands` returns one `Band` per zone,
+each with its own `splits`; `PdfTextExtractorService` assembles band by band, top to bottom.
+`columnSplits` is a convenience over it, returning the splits of the **dominant band** (the one
+carrying the most fragments) — that is what `TableRegionDetector` consumes.
+
+The algorithm runs two passes over a **fragment-level** X histogram (never over lines grouped by Y:
+grouping by Y merges both columns into one full-width line, filling the very gutter being searched):
+
+1. a tolerant pass over the page locates *candidate* gutters;
+2. fragments crossing a candidate become band separators, and each band is then analysed on its own.
+
+Three guards, each earned from a measured failure — do not remove one without re-running
+`ColumnDetectionBenchmark`:
+
+- **tolerance is never zero.** Real gutters are not perfectly empty (descenders, rules, figure
+  bleed): resnet p1 has no 8 pt run of strictly-empty bins although its gutter plainly exists.
+- **text required on both sides** of a split. Without it, a page margin or a bullet indent reads as
+  a gutter — that is how a 1-column paper was being reported as 3 columns before #31.
+- **minimum column width.** A wide gutter crossed by a thin residue otherwise yields two splits
+  framing a 13 pt-wide "column".
+
+Why it matters: before #31 a *single* element crossing the gutter — title, author line, arXiv stamp,
+figure caption — made the whole page fall back to a global `(Y, X)` sort, **interleaving the two
+columns** line by line. Measured across the corpus, the fix took manual-review chunks from 87 to 54
+(BERT 17 → 0, EnnsDoc 4 → 0, resnet 14 → 0) while leaving 1-column documents byte-identical.
+
+The thresholds were calibrated *on the corpus*, not chosen a priori — resnet p5 stayed interleaved
+by a single fragment until the candidate tolerance went from 10 % to 20 %. Re-run
+`ColumnDetectionBenchmark` (`@Disabled`, sweeps all 542 pages) after touching any of them.
+
+## The reading-order oracle (issue #30, palier 3)
+
+`PdfTextExtractorService.computeSuspectLines` is the *verifier*: given the line-start X sequence of
+a mono-column assembly, it reports the lines that betray interleaving. It runs **only** on pages
+assembled mono — a page assembled column by column is correct by construction.
+
+It looks for the **signature** of interleaving: a repeated alternation between two *stable*,
+well-separated X anchors. Not merely a backward jump — the first version used that, and it was right
+one time in five (213 of 541 corpus pages flagged wrongly), because code listings, bullet lists,
+centred equations and tables all jump backwards without any interleaving. Four conditions, all
+required: two anchors ≥ 15 % of page width apart, each carrying ≥ 20 % of the lines, ≥ 4 alternations
+between them, and only then the lines returning to the left anchor are flagged. Anchor grouping is
+deliberately loose (20 pt) — at 5 pt a single column edge split into three anchors, each falling
+below the share threshold.
+
+Measured on the corpus against the band detector as ground truth: **precision 18 % → 97 %**, recall
+70 %, one false positive left. Manual-review chunks fell from 54 to 8.
+
+Recall matters less than precision *today* — genuinely multi-column pages are assembled by columns
+and never reach the oracle, so its only job is to stay quiet on healthy mono pages. That balance
+would shift if the oracle ever drives a retry loop, where a false positive costs only ~0.2 ms of
+recomputation; the thresholds should be revisited then, with `ColumnDetectionBenchmark` re-run.
+
+## The verification loop (issue #31)
+
+Geometry proposes, reading order disposes. `extractPageText` assembles the page from the detected
+bands, then runs the oracle on the result; if the text carries the interleaving signature, the
+geometry was wrong and the page is **re-assembled** with alternative splits, keeping whichever
+attempt the oracle scores best.
+
+This is what makes extraction robust to layouts never seen before: a threshold is calibrated on a
+corpus and bets the next document resembles it, whereas a verification checks the actual output.
+
+- **The oracle localises, not just detects.** `analyseReadingOrder` returns the midpoint between the
+  two anchors it found, so the first retry is a split derived from the interleaving itself; further
+  attempts come from `PageGeometryAnalyzer.candidateGutters` (gutters the guards rejected).
+- **Bounded** to `MAX_REASSEMBLY_ATTEMPTS` (3). Never "until it is clean", which would not terminate
+  on a pathological page. If no attempt is clean, the least-bad one is kept **and its suspect lines
+  survive** — the failure stays visible downstream (lowered confidence, `manual_review`) instead of
+  being silently shipped.
+- **Cost is negligible**: the PDF is not re-read. Only the histogram and the sort are replayed on
+  fragments already in memory — ~0.2 ms per attempt against ~10 ms to parse the page, and only on
+  pages that fail.
+
+Demonstrated by deliberately degrading `CANDIDATE_TOLERANCE_RATIO` to 10 %, the setting that leaves
+resnet p5 and p11 interleaved: with the loop, both come out clean and corpus manual-review chunks
+stay at 8. The geometry can be wrong and the output is still right.
+
+**Two signatures, both handled.** Stitched columns leave a different trace depending on whether
+their baselines coincide:
+
+- *baselines differ* → line starts **alternate** between two anchors (`analyseAlternatingColumns`);
+- *baselines coincide* → the columns merge **inside** one line, separated by a wide internal blank
+  (`analyseMergedColumns`) — the `customiza-␣␣␣␣lack the necessary` symptom quoted by the issue.
+
+Only one shows at a time, so the analysis cascades. The second is detected geometrically, not from
+the text: `assembleAsSingleColumn` records each line's widest internal gap, and a gap recurring at
+the *same* abscissa across ≥ 50 % of lines is a gutter. Tables produce aligned internal blanks too —
+the high share requirement separates them (a gutter runs the whole body, a table spans part of the
+page), and any re-assembly that turns the page tabular is rejected outright.
+
+Corpus after both signatures: **0 pages with suspect lines**, manual-review chunks at 8 (all from
+palier 1), table fixtures untouched.
 
 ## Key architectural detail: header/footer cleaning
 

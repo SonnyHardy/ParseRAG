@@ -12,15 +12,23 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Validation du score d'ordre de lecture par chunk (issue #30, palier 3) sur le vrai BERT
- * (arxiv-1810.04805, 2 colonnes). Hors-ligne : extracteur + chunking purs, sans Spring ni datasource.
- * La page 1 (colonnes entrelacées à l'assemblage) émet des lignes suspectes attribuées aux chunks ;
- * les pages à colonnes correctement séparées n'en émettent aucune (chunks non pénalisés).
+ * Ordre de lecture sur le vrai BERT (arxiv-1810.04805, 2 colonnes), après la détection par bandes
+ * (issue #31). Hors-ligne : extracteur + chunking purs, sans Spring ni datasource.
+ *
+ * <p><strong>Ces tests assertaient l'inverse avant #31</strong> : la page 1 entrelaçait ses colonnes
+ * (bandeau titre traversant la gouttière → aucune colonne détectée → tri Y global) et émettait des
+ * lignes suspectes. C'était le bug, pas le contrat. Depuis la détection par bandes, le titre forme
+ * sa propre bande mono et le corps est assemblé colonne par colonne : plus aucune ligne suspecte.
+ *
+ * <p>La mécanique de détection elle-même (#30) reste couverte par
+ * {@link SuspectLineDetectionTest}, qui l'exerce sur une séquence fabriquée — elle ne dépend donc
+ * plus d'un défaut d'extraction pour être testée.
  */
 class PdfTextExtractorReadingOrderTest {
 
@@ -53,53 +61,45 @@ class PdfTextExtractorReadingOrderTest {
         }
     }
 
+    /** Critère d'acceptation de #31 : plus aucune page de BERT n'entrelace ses colonnes. */
     @Test
-    void bert_interleavedPageEmitsSuspectLines_cleanPagesDoNot() throws IOException {
+    void bert_noPageEmitsSuspectLinesAnymore() throws IOException {
         ExtractedDocument doc = extractor.extract(load("arxiv-1810.04805-bert-2col.pdf"), Plan.PRO);
 
-        System.out.println("=== lignes suspectes d'ordre de lecture par page (BERT) ===");
-        doc.pages().forEach(p ->
-                System.out.printf("  page %2d : %d lignes suspectes%n", p.pageNumber(), p.reorderSuspectLines().size()));
-
-        // Page 1 entrelacée (gouttière non détectée → mono) → lignes suspectes émises.
-        assertFalse(doc.pages().get(0).reorderSuspectLines().isEmpty(),
-                "page 1 devrait émettre des lignes suspectes");
-        // Pages texte pur à colonnes correctement séparées → aucune ligne suspecte.
-        for (int p : new int[]{2, 9, 11, 12}) {
-            assertTrue(doc.pages().get(p - 1).reorderSuspectLines().isEmpty(),
-                    "page " + p + " (propre) ne devrait émettre aucune ligne suspecte");
-        }
+        doc.pages().forEach(p -> assertEquals(0, p.reorderSuspectLines().size(),
+                "page " + p.pageNumber() + " ne devrait plus émettre de ligne suspecte"));
     }
 
+    /**
+     * La page 1 portait le symptôme le plus visible : l'abstract cousu ligne à ligne avec la colonne
+     * de droite. On vérifie sur le texte lui-même, pas seulement sur le compteur.
+     */
     @Test
-    void bert_perChunkConfidence_interleavedBelowClean_andManualReviewFlagged() throws IOException {
+    void bert_page1_abstractReadsContiguously() throws IOException {
+        ExtractedDocument doc = extractor.extract(load("arxiv-1810.04805-bert-2col.pdf"), Plan.PRO);
+        String page1 = doc.pages().getFirst().rawText();
+
+        // Fragment de la colonne GAUCHE qui, avant #31, était coupé par du texte de la colonne droite.
+        assertTrue(page1.contains("There are two existing strategies for apply-"),
+                "le début de la colonne gauche doit être présent");
+        int leftIdx = page1.indexOf("There are two existing strategies for apply-");
+        String following = page1.substring(leftIdx, Math.min(leftIdx + 120, page1.length()));
+        assertFalse(following.contains("Abstract"),
+                "la suite immédiate ne doit plus venir de l'autre colonne, or on y trouve : " + following);
+    }
+
+    /** Les chunks de la page 1 ne doivent plus être pénalisés ni marqués pour revue. */
+    @Test
+    void bert_page1_chunksNoLongerFlaggedForManualReview() throws IOException {
         ExtractedDocument doc = extractor.extract(load("arxiv-1810.04805-bert-2col.pdf"), Plan.PRO);
         List<Chunk> chunks = chunking.chunk(doc);
 
-        System.out.println("=== chunks page 1 (entrelacée) : confidence + manual_review ===");
-        chunks.stream().filter(c -> c.page() == 1).forEach(c ->
-                System.out.printf("  %s conf=%.2f review=%s  %s%n", c.id(), c.confidence(),
-                        c.manualReviewNeeded(), c.text().substring(0, Math.min(45, c.text().length())).replace("\n", " ")));
+        assertFalse(chunks.stream().filter(c -> c.page() == 1).anyMatch(Chunk::manualReviewNeeded),
+                "aucun chunk de la page 1 ne devrait rester marqué manual_review");
 
-        // Pivot par page : meilleur chunk d'une page entrelacée (p1) < meilleur d'une page propre (p9).
-        double bestInterleaved = chunks.stream().filter(c -> c.page() == 1)
-                .mapToDouble(Chunk::confidence).max().orElseThrow();
-        double bestClean = chunks.stream().filter(c -> c.page() == 9)
-                .mapToDouble(Chunk::confidence).max().orElseThrow();
-        assertTrue(bestInterleaved < bestClean,
-                "page 1 entrelacée (" + bestInterleaved + ") doit rester sous page 9 propre (" + bestClean + ")");
-
-        // manual_review_needed est câblé sur la confidence finale (seuil 0.4).
+        // Le câblage manual_review ↔ seuil de confidence reste vrai (contrat de #30).
         double threshold = PROPS.getConfidence().getManualReviewThreshold();
         assertTrue(chunks.stream().allMatch(c -> c.manualReviewNeeded() == (c.confidence() < threshold)),
                 "manual_review doit refléter exactement confidence < seuil");
-        // Les chunks entrelacés (page 1) sont marqués...
-        assertTrue(chunks.stream().filter(c -> c.page() == 1).anyMatch(Chunk::manualReviewNeeded),
-                "au moins un chunk de la page entrelacée devrait être marqué manual_review");
-        // ...et le meilleur chunk d'une page propre (lecture saine, confidence haute) ne l'est pas.
-        Chunk bestCleanChunk = chunks.stream().filter(c -> c.page() == 9)
-                .max((a, b) -> Double.compare(a.confidence(), b.confidence())).orElseThrow();
-        assertFalse(bestCleanChunk.manualReviewNeeded(),
-                "le meilleur chunk d'une page propre ne devrait pas être marqué manual_review");
     }
 }
