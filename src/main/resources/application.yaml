@@ -41,6 +41,17 @@ logging:
     root: INFO
     com.sonny.parserag: DEBUG
 
+# ── Specification OpenAPI (issue #16) ─────────────────────────────────────────
+# OFF par defaut, des deux cotes. La spec publiee est le snapshot docs/openapi.json ; on ne
+# la regenere qu'en lancant l'application avec le profil `docs` (application-docs.yaml), ce qui
+# evite d'exposer /v3/api-docs et Swagger UI en production. ApiKeyFilter filtrant *toutes* les
+# requetes (issue #37), ces chemins repondraient de toute facon 401 sans cle.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 # ── Observabilité OpenTelemetry → Grafana Cloud (issue #38) ────────────────────
 # Export OFF par défaut : sans OTEL_ENABLED, aucune tentative réseau (dev, tests, CI). Les compteurs
 # sont malgré tout enregistrés dans le MeterRegistry, donc lisibles via /actuator/metrics et

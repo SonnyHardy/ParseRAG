@@ -333,6 +333,39 @@ Known open gaps (by design, separate chantiers): interleaved margin line-numbers
 issue in `PdfTextExtractorService`, not header/footer), and over-deletion risk on dense TOC/index
 pages (mitigated by the index guard, may need tuning).
 
+## API documentation (issue #16)
+
+Three artefacts, all public-facing and all in English (the code's comments stay French):
+`README.md`, `docs/examples/` (cURL, Java/OkHttp, Python) and `docs/openapi.json`.
+
+`docs/openapi.json` is a **committed snapshot generated from the code** by springdoc, not a
+hand-written file — regenerate it whenever an endpoint, a response model or an error code changes:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
+curl -sS -H "X-API-Key: test-key-dev-123" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
+```
+
+springdoc is **off by default** (`springdoc.api-docs.enabled: false`); the `docs` profile
+(`application-docs.yaml`) is the only thing that turns it on, along with `OpenApiConfig` — which
+carries the same `@ConditionalOnProperty`. Two reasons not to expose it in production: `ApiKeyFilter`
+exempts no path (issue #37), so `/v3/api-docs` would answer 401 without a key anyway; and the spec is
+consumed from RapidAPI, not from a Swagger UI we host. Note the export therefore *requires* a
+reachable Postgres — the filter's key lookup is a DB read.
+
+`HealthController` is `@Hidden`: publishing an admin endpoint in the spec would announce the very
+existence the 404 of issue #37 is designed to hide.
+
+Two traps met while wiring it, both already fixed but worth knowing:
+
+- **swagger-annotations is pinned to 2.2.47** in `dependencyManagement`. `openai-java` pulls
+  `swagger-annotations` 2.2.31 and springdoc pulls `swagger-annotations-jakarta` 2.2.47 — *the same
+  package* `io.swagger.v3.oas.annotations` from two artefacts. The low version wins on the classpath
+  and generation dies on `NoSuchMethodError: Schema.$dynamicRef()`.
+- **Never put `@Schema` on the `MultipartFile` parameter.** It replaces the schema of the whole
+  request *body*: the spec then describes a raw binary instead of a form carrying a `file` part, and
+  a generated client posts the wrong thing.
+
 ## Conventions & current state
 
 - **Domain models are Java records** under `model/domain` (`ExtractedDocument`, `ExtractedPage`,

@@ -40,6 +40,21 @@
               Le runtime protobuf est rétro-compatible avec du code généré plus ancien : on aligne
               donc sur la version haute, exigée par un seul des deux camps.
             -->
+            <!--
+              Arbitrage swagger-annotations (issue #16). Deux artefacts publient le meme package
+              io.swagger.v3.oas.annotations : swagger-annotations, tire par openai-java en 2.2.31,
+              et swagger-annotations-jakarta, tire par springdoc en 2.2.47. Le classpath n'en
+              retient qu'un, et la version basse gagne : springdoc echoue alors a la generation sur
+              un NoSuchMethodError (Schema.$dynamicRef, apparue apres 2.2.31). On aligne donc la
+              version basse sur la haute — les annotations sont retro-compatibles, openai-java ne
+              s'en sert que pour decrire ses propres modeles.
+            -->
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations</artifactId>
+                <version>2.2.47</version>
+            </dependency>
+
             <dependency>
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
@@ -193,6 +208,17 @@
             <artifactId>bucket4j_jdk17-core</artifactId>
             <version>8.19.0</version>
             <scope>compile</scope>
+        </dependency>
+
+        <!--
+            Genere la specification OpenAPI a partir du code (issue #16). Desactive par defaut
+            (springdoc.api-docs.enabled=false) : la spec publiee est le snapshot docs/openapi.json,
+            regenere via le profil `docs`. Voir README, section « Regenerating the OpenAPI spec ».
+        -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>3.0.3</version>
         </dependency>
 
     </dependencies>
