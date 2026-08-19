@@ -206,4 +206,114 @@ class TableExtractorServiceTest {
                         List.of("Widget B", "80", "92")));
         assertFalse(service.hasStructuralDefect(t), "table propre → aucun défaut");
     }
+
+    // ── Cellules empilées (issue #26) ────────────────────────────────────────────────────
+
+    /**
+     * Tabula joint les lignes d'une cellule multi-lignes par un retour chariot : trois valeurs se
+     * retrouvent empilées dans une seule cellule, et la table sort 2x3 là où elle est 4x3. Le score
+     * de brièveté ne le voit pas — chaque morceau empilé est court — d'où l'éclatement explicite.
+     */
+    @Test
+    void stackedCellsAreSplitWhenTheCutIsDetermined() {
+        List<List<String>> g = grid(
+                new String[]{"net", "data", "mAP"},
+                new String[]{"VGG-16\rResNet-101\rResNet-101", "07+12\r07+12\rCOCO+07+12", "73.2\r76.4\r85.6"});
+
+        TableResult t = service.buildFromGrid(g, 11, null, false, cfg);
+
+        assertNotNull(t);
+        assertEquals(List.of("net", "data", "mAP"), t.headers());
+        assertEquals(3, t.rows().size(), "la ligne empilee doit devenir trois lignes");
+        assertEquals(List.of("VGG-16", "07+12", "73.2"), t.rows().get(0));
+        assertEquals(List.of("ResNet-101", "07+12", "76.4"), t.rows().get(1));
+        assertEquals(List.of("ResNet-101", "COCO+07+12", "85.6"), t.rows().get(2));
+    }
+
+    /** Une cellule vide s'étend en cellules vides : on ne réplique pas une valeur qu'on n'a pas. */
+    @Test
+    void emptyCellsExpandToEmptyOnSplit() {
+        List<List<String>> g = grid(
+                new String[]{"net", "data", "mAP"},
+                new String[]{"VGG-16\rResNet-101", "", "73.2\r76.4"});
+
+        TableResult t = service.buildFromGrid(g, 11, null, false, cfg);
+
+        assertNotNull(t);
+        assertEquals(2, t.rows().size());
+        assertEquals(List.of("VGG-16", "", "73.2"), t.rows().get(0));
+        assertEquals(List.of("ResNet-101", "", "76.4"), t.rows().get(1));
+    }
+
+    /**
+     * Comptes de parties divergents : la ligne mêle une cellule fusionnée et des cellules simples,
+     * la répartition n'est pas déterminée. On ne devine pas — la ligne reste intacte et le défaut
+     * structurel prend le relais pour router vers la vision.
+     */
+    @Test
+    void ambiguousStackIsLeftIntactAndFlaggedAsDefect() {
+        List<List<String>> g = grid(
+                new String[]{"net", "data", "mAP"},
+                new String[]{"VGG-16\rResNet-101\rResNet-101", "07+12", "73.2\r76.4"});
+
+        TableResult t = service.buildFromGrid(g, 11, null, false, cfg);
+
+        assertNotNull(t);
+        assertEquals(1, t.rows().size(), "aucun eclatement : le decoupage est indecidable");
+        assertTrue(service.hasStructuralDefect(t),
+                "l'empilement residuel doit etre signale pour router vers la vision");
+    }
+
+    /** Non-régression : une grille saine ne doit surtout pas être touchée par l'éclatement. */
+    @Test
+    void cleanGridIsUnaffectedBySplitting() {
+        List<List<String>> g = grid(
+                new String[]{"Produit", "Q1", "Q2"},
+                new String[]{"Widget A", "120", "145"},
+                new String[]{"Widget B", "80", "92"});
+
+        TableResult t = service.buildFromGrid(g, 1, null, false, cfg);
+
+        assertNotNull(t);
+        assertEquals(2, t.rows().size());
+        assertFalse(service.hasStructuralDefect(t));
+    }
+
+    // ── En-tête « ligne de données » (issue #26, 4ᵉ défaut) ──────────────────────────────
+
+    /**
+     * bert p7 (SWAG) : la vraie ligne d'en-tête « System | Dev | Test » a été ratée, la première
+     * ligne de données a été promue en en-tête. La règle d'origine exigeait une 1ʳᵉ cellule vide et
+     * laissait donc passer ce cas, pourtant identique : un libellé suivi de nombres.
+     */
+    @Test
+    void headerThatIsActuallyADataRowIsFlagged() {
+        List<List<String>> g = grid(
+                new String[]{"ESIM+GloVe", "51.9", "52.7"},
+                new String[]{"ESIM+ELMo", "59.1", "59.2"},
+                new String[]{"OpenAI GPT", "78.0", "78.0"});
+
+        TableResult t = service.buildFromGrid(g, 7, null, false, cfg);
+
+        assertNotNull(t);
+        assertTrue(service.hasStructuralDefect(t),
+                "un en-tete fait d'un libelle suivi de nombres est une ligne de donnees promue");
+    }
+
+    /**
+     * Contre-exemple : des en-têtes légitimement numériques ne doivent pas déclencher. La colonne
+     * de libellés est étiquetée et les autres en-têtes ne sont pas des nombres.
+     */
+    @Test
+    void legitimateHeadersAreNotFlagged() {
+        List<List<String>> g = grid(
+                new String[]{"#L", "#H", "#A", "LM (ppl)"},
+                new String[]{"6", "768", "12", "5.84"},
+                new String[]{"12", "768", "12", "4.68"});
+
+        TableResult t = service.buildFromGrid(g, 9, null, false, cfg);
+
+        assertNotNull(t);
+        assertFalse(service.hasStructuralDefect(t));
+    }
 }
