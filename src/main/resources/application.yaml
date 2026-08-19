@@ -3,6 +3,9 @@ spring:
     import: optional:file:.env[.properties]
   application:
     name: ParseRAG
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
 
   servlet:
     multipart:
