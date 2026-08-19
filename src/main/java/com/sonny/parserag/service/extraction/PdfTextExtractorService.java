@@ -82,10 +82,37 @@ public class PdfTextExtractorService {
     /** Nombre minimal de bascules gauche↔droite : c'est la répétition qui signe l'entrelacement. */
     private static final int   MIN_ALTERNATIONS = 4;
 
+    /**
+     * Nombre maximal de ré-assemblages tentés quand l'ordre de lecture produit se révèle entrelacé
+     * (issue #31). Borné par construction : une boucle « jusqu'à ce que ce soit propre » ne
+     * terminerait pas sur une page pathologique. Une tentative coûte ~0,2 ms (le PDF n'est pas
+     * relu, seuls l'histogramme et le tri sont rejoués sur des fragments déjà en mémoire).
+     */
+    private static final int   MAX_REASSEMBLY_ATTEMPTS = 3;
+
     /** Texte reconstruit d'une page + ses lignes suspectes d'ordre de lecture (texte exact). */
     private record PageExtraction(String text, Set<String> reorderSuspectLines) {}
     /** Résultat d'assemblage : texte + X et texte de chaque ligne, dans l'ordre de lecture produit. */
     private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts) {}
+
+    /**
+     * Verdict de l'oracle d'ordre de lecture : les lignes suspectes, et — quand un entrelacement est
+     * reconnu — l'abscisse où passerait la gouttière. L'oracle ne fait pas que détecter, il
+     * <em>localise</em> : c'est ce qui permet à la boucle de vérification de proposer un découpage
+     * alternatif au lieu de tâtonner.
+     */
+    private record ReadingOrder(Set<String> suspectLines, float splitEstimate) {
+
+        static final ReadingOrder CLEAN = new ReadingOrder(Set.of(), Float.NaN);
+
+        boolean interleaved() {
+            return !suspectLines.isEmpty();
+        }
+
+        boolean hasSplitEstimate() {
+            return !Float.isNaN(splitEstimate);
+        }
+    }
 
     private final AppProperties appProperties;
     private final PageGeometryAnalyzer pageGeometryAnalyzer;
@@ -201,24 +228,85 @@ public class PdfTextExtractorService {
         }
 
         List<Band> bands = pageGeometryAnalyzer.columnBands(fragments, pageWidth, pageHeight);
-        boolean multiColumn = bands.stream().anyMatch(b -> b.columns() > 1);
-
         Assembled assembled = assembleAsBands(bands, pageNum);
+        ReadingOrder verdict = analyseReadingOrder(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
 
-        // Les lignes suspectes ne se relèvent que sur un flux mono-colonne : c'est là, et seulement
-        // là, que deux colonnes peuvent s'être entrelacées. Dès qu'une bande a été assemblée colonne
-        // par colonne, l'ordre de lecture est garanti par construction et le bruit local d'une
-        // figure relève du palier 1 de #30, pas d'une anomalie d'ordre de lecture.
-        Set<String> suspectLines = multiColumn
-                ? Set.of()
-                : computeSuspectLines(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
-
-        if (multiColumn && log.isDebugEnabled()) {
+        if (log.isDebugEnabled() && bands.stream().anyMatch(b -> b.columns() > 1)) {
             log.debug("Page {} — {} band(s): {}", pageNum, bands.size(),
                     bands.stream().map(b -> b.columns() + "col/" + b.rows() + "r").toList());
         }
 
-        return new PageExtraction(assembled.text(), suspectLines);
+        // La géométrie propose, l'ordre de lecture dispose : si le texte produit porte la signature
+        // d'un entrelacement, c'est que le découpage était faux — on réessaie plutôt que de livrer
+        // deux colonnes cousues.
+        if (verdict.interleaved()) {
+            assembled = reassembleUntilReadable(fragments, assembled, verdict, pageWidth, pageHeight, pageNum);
+            verdict = analyseReadingOrder(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+        }
+
+        return new PageExtraction(assembled.text(), verdict.suspectLines());
+    }
+
+    /**
+     * Boucle de vérification (issue #31) : ré-assemble la page avec des découpages alternatifs tant
+     * que l'ordre de lecture trahit un entrelacement, et garde le meilleur essai.
+     *
+     * <p><strong>Pourquoi une boucle plutôt qu'un meilleur seuil.</strong> Un seuil est calibré sur
+     * un corpus et parie que le document suivant lui ressemble ; une vérification contrôle la sortie
+     * réelle et ne présume rien de la mise en page. C'est ce qui rend l'extraction robuste à des
+     * documents jamais vus.
+     *
+     * <p>Bornée à {@link #MAX_REASSEMBLY_ATTEMPTS} essais : jamais « jusqu'à ce que ce soit propre »,
+     * qui ne terminerait pas sur une page pathologique. Si aucun essai n'est propre, on garde le
+     * moins mauvais et ses lignes suspectes subsistent — l'échec reste <em>visible</em> en aval
+     * (confiance abaissée, {@code manual_review}) plutôt que silencieusement livré.
+     *
+     * <p>Coût : le PDF n'est pas relu. Seuls l'histogramme et le tri sont rejoués sur des fragments
+     * déjà en mémoire, soit ~0,2 ms par essai contre ~10 ms pour lire la page.
+     */
+    private Assembled reassembleUntilReadable(List<Fragment> fragments, Assembled nominal,
+                                              ReadingOrder nominalVerdict, float pageWidth,
+                                              float pageHeight, int pageNum) {
+        Assembled best = nominal;
+        int bestScore = nominalVerdict.suspectLines().size();
+
+        for (float split : reassemblyCandidates(fragments, nominalVerdict, pageWidth, pageHeight)) {
+            Assembled attempt = assembleAsColumns(fragments, new float[]{split});
+            int score = computeSuspectLines(attempt.lineStartX(), attempt.lineTexts(), pageWidth).size();
+            if (score < bestScore) {
+                best = attempt;
+                bestScore = score;
+            }
+            if (bestScore == 0) break;
+        }
+
+        if (bestScore < nominalVerdict.suspectLines().size()) {
+            log.debug("Page {} — reading order recovered by re-assembly ({} → {} suspect lines)",
+                    pageNum, nominalVerdict.suspectLines().size(), bestScore);
+        } else {
+            log.debug("Page {} — still interleaved after {} attempt(s), {} suspect lines kept",
+                    pageNum, MAX_REASSEMBLY_ATTEMPTS, bestScore);
+        }
+        return best;
+    }
+
+    /**
+     * Découpages à essayer, par ordre de crédibilité décroissante : d'abord la gouttière déduite de
+     * l'entrelacement lui-même (l'oracle sait où sont les deux bords de colonne), puis les
+     * gouttières plausibles que la géométrie avait repérées mais écartées par prudence.
+     */
+    private List<Float> reassemblyCandidates(List<Fragment> fragments, ReadingOrder verdict,
+                                             float pageWidth, float pageHeight) {
+        List<Float> candidates = new ArrayList<>(MAX_REASSEMBLY_ATTEMPTS);
+        if (verdict.hasSplitEstimate()) candidates.add(verdict.splitEstimate());
+
+        for (float gutter : pageGeometryAnalyzer.candidateGutters(fragments, pageWidth, pageHeight)) {
+            if (candidates.size() >= MAX_REASSEMBLY_ATTEMPTS) break;
+            boolean alreadyCovered = candidates.stream()
+                    .anyMatch(c -> Math.abs(c - gutter) < MIN_ANCHOR_SEPARATION_RATIO * pageWidth);
+            if (!alreadyCovered) candidates.add(gutter);
+        }
+        return candidates;
     }
 
     /**
@@ -267,15 +355,20 @@ public class PdfTextExtractorService {
      * chunking.
      */
     Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
+        return analyseReadingOrder(lineStartX, lineTexts, pageWidth).suspectLines();
+    }
+
+    /** Variante complète : lignes suspectes <em>et</em> abscisse de gouttière déduite. */
+    private ReadingOrder analyseReadingOrder(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
         int n = Math.min(lineStartX.size(), lineTexts.size());
-        if (n < READING_ORDER_MIN_LINES) return Set.of();
+        if (n < READING_ORDER_MIN_LINES) return ReadingOrder.CLEAN;
 
         List<float[]> anchors = anchors(lineStartX, n);
-        if (anchors.size() < 2) return Set.of();
+        if (anchors.size() < 2) return ReadingOrder.CLEAN;
 
         int required = (int) Math.ceil(MIN_ANCHOR_SHARE * n);
         float[] dominant = anchors.getFirst();
-        if (dominant[1] < required) return Set.of();
+        if (dominant[1] < required) return ReadingOrder.CLEAN;
 
         // La seconde ancre est la plus fréquente *suffisamment éloignée* de la première — et non la
         // deuxième du classement : sur une colonne à deux niveaux d'indentation, les deux premières
@@ -289,7 +382,7 @@ public class PdfTextExtractorService {
                 break;
             }
         }
-        if (opposite == null) return Set.of();
+        if (opposite == null) return ReadingOrder.CLEAN;
 
         float left  = Math.min(dominant[0], opposite[0]);
         float right = Math.max(dominant[0], opposite[0]);
@@ -310,7 +403,7 @@ public class PdfTextExtractorService {
         }
         // Un aller-retour isolé (une figure, un encadré) n'est pas un entrelacement : il en faut
         // la répétition.
-        if (alternations < MIN_ALTERNATIONS) return Set.of();
+        if (alternations < MIN_ALTERNATIONS) return ReadingOrder.CLEAN;
 
         Set<String> suspect = new HashSet<>();
         for (int i = 1; i < n; i++) {
@@ -319,7 +412,9 @@ public class PdfTextExtractorService {
                 if (line.length() >= MIN_SUSPECT_LINE_LEN) suspect.add(line);
             }
         }
-        return suspect;
+        // Le milieu des deux bords de colonne : il tombe forcément entre les deux colonnes, donc
+        // sépare correctement leurs fragments par leur milieu.
+        return new ReadingOrder(suspect, (left + right) / 2f);
     }
 
     /**

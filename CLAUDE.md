@@ -216,6 +216,35 @@ and never reach the oracle, so its only job is to stay quiet on healthy mono pag
 would shift if the oracle ever drives a retry loop, where a false positive costs only ~0.2 ms of
 recomputation; the thresholds should be revisited then, with `ColumnDetectionBenchmark` re-run.
 
+## The verification loop (issue #31)
+
+Geometry proposes, reading order disposes. `extractPageText` assembles the page from the detected
+bands, then runs the oracle on the result; if the text carries the interleaving signature, the
+geometry was wrong and the page is **re-assembled** with alternative splits, keeping whichever
+attempt the oracle scores best.
+
+This is what makes extraction robust to layouts never seen before: a threshold is calibrated on a
+corpus and bets the next document resembles it, whereas a verification checks the actual output.
+
+- **The oracle localises, not just detects.** `analyseReadingOrder` returns the midpoint between the
+  two anchors it found, so the first retry is a split derived from the interleaving itself; further
+  attempts come from `PageGeometryAnalyzer.candidateGutters` (gutters the guards rejected).
+- **Bounded** to `MAX_REASSEMBLY_ATTEMPTS` (3). Never "until it is clean", which would not terminate
+  on a pathological page. If no attempt is clean, the least-bad one is kept **and its suspect lines
+  survive** — the failure stays visible downstream (lowered confidence, `manual_review`) instead of
+  being silently shipped.
+- **Cost is negligible**: the PDF is not re-read. Only the histogram and the sort are replayed on
+  fragments already in memory — ~0.2 ms per attempt against ~10 ms to parse the page, and only on
+  pages that fail.
+
+Demonstrated by deliberately degrading `CANDIDATE_TOLERANCE_RATIO` to 10 %, the setting that leaves
+resnet p5 and p11 interleaved: with the loop, both come out clean and corpus manual-review chunks
+stay at 8. The geometry can be wrong and the output is still right.
+
+**Known gap**: the loop only corrects *line-level* interleaving (alternating line starts). When two
+columns share their baselines exactly, they merge into a single line with wide internal spaces — a
+different signature, seen by palier 1 of #30 and not yet repaired by the loop.
+
 ## Key architectural detail: header/footer cleaning
 
 Lives entirely in the package `com.sonny.parserag.service.headerfooter`, designed as **stacked

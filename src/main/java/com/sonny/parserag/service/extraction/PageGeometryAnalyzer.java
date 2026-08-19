@@ -129,12 +129,7 @@ public class PageGeometryAnalyzer {
         if (fragments == null || fragments.isEmpty()) return List.of();
 
         // ── Passe A : où pourrait se trouver une gouttière ? ──
-        List<Fragment> core = fragments.stream()
-                .filter(f -> f.y() >= pageHeight * Y_FILTER_TOP_RATIO
-                          && f.y() <= pageHeight * Y_FILTER_BOTTOM_RATIO)
-                .toList();
-        int coreRows = rows(core);
-        float[] candidates = gutters(core, pageWidth, (int) Math.floor(CANDIDATE_TOLERANCE_RATIO * coreRows));
+        float[] candidates = candidateGutters(fragments, pageWidth, pageHeight);
 
         if (candidates.length == 0) {
             return List.of(new Band(List.copyOf(fragments), new float[0]));
@@ -177,6 +172,24 @@ public class PageGeometryAnalyzer {
         if (!current.isEmpty())   bands.add(buildBand(current, pageWidth));
 
         return mergeAdjacentMonoBands(bands);
+    }
+
+    /**
+     * Positions X où une gouttière est <em>plausible</em> sur la page, sans engagement : c'est la
+     * passe tolérante, celle qui localise avant que les gardes ne tranchent.
+     *
+     * <p>Exposée pour la boucle de vérification de l'extraction (issue #31) : quand l'ordre de
+     * lecture produit révèle un entrelacement, ces positions sont les découpages alternatifs à
+     * essayer. Une gouttière écartée par les gardes n'est pas forcément fausse — elle peut avoir été
+     * rejetée sur un critère trop prudent pour cette page-là.
+     */
+    public float[] candidateGutters(List<Fragment> fragments, float pageWidth, float pageHeight) {
+        if (fragments == null || fragments.isEmpty()) return new float[0];
+        List<Fragment> core = fragments.stream()
+                .filter(f -> f.y() >= pageHeight * Y_FILTER_TOP_RATIO
+                          && f.y() <= pageHeight * Y_FILTER_BOTTOM_RATIO)
+                .toList();
+        return gutters(core, pageWidth, (int) Math.floor(CANDIDATE_TOLERANCE_RATIO * rows(core)));
     }
 
     /**
