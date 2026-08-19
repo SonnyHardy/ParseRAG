@@ -25,11 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * précisément la propriété qui rend l'extraction robuste à des mises en page jamais vues — un seuil
  * est calibré sur un corpus, une vérification contrôle la sortie réelle.
  *
- * <p><strong>Limite connue de la fixture.</strong> Elle produit l'entrelacement <em>ligne à ligne</em>
- * (les débuts de ligne alternent), qui est la signature traitée par le palier 3 de #30. Quand deux
- * colonnes partagent exactement leurs lignes de base, elles fusionnent au contraire en une seule
- * ligne à espaces internes larges — une autre signature, relevée par le palier 1, et que la boucle
- * ne sait pas encore corriger.
+ * <p>Les deux <strong>signatures</strong> d'entrelacement sont couvertes, car deux colonnes cousues
+ * laissent une trace différente selon que leurs lignes de base coïncident : décalées, les débuts de
+ * ligne alternent ; alignées, les colonnes fusionnent <em>dans</em> la même ligne, séparées par un
+ * large blanc interne.
  */
 class ReadingOrderRecoveryTest {
 
@@ -47,7 +46,7 @@ class ReadingOrderRecoveryTest {
      * pour saturer la gouttière. Les colonnes portent des textes reconnaissables afin de vérifier
      * l'ordre de lecture sans ambiguïté.
      */
-    private static byte[] hostileTwoColumnPdf() throws Exception {
+    private static byte[] hostileTwoColumnPdf(boolean alignedBaselines) throws Exception {
         try (PDDocument doc = new PDDocument()) {
             PDPage page = new PDPage(PDRectangle.A4);
             doc.addPage(page);
@@ -67,14 +66,19 @@ class ReadingOrderRecoveryTest {
                     // partagent pas leurs lignes de base dès que leur contenu diffère (figures,
                     // paragraphes de hauteurs inégales). C'est ce décalage qui fait alterner les
                     // débuts de ligne à l'assemblage — la signature que l'oracle reconnaît.
-                    write(cs, 70,  y,     "GAUCHE ligne " + row + " du texte de la colonne de gauche");
-                    write(cs, 320, y - 7, "DROITE ligne " + row + " du texte de la colonne de droite");
+                    write(cs, 70, y, "GAUCHE ligne " + row + " du texte de la colonne de gauche");
+                    write(cs, 320, alignedBaselines ? y : y - 7,
+                            "DROITE ligne " + row + " du texte de la colonne de droite");
                 }
             }
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.save(out);
             return out.toByteArray();
         }
+    }
+
+    private static String flatten(String text) {
+        return text.replaceAll("\s+", " ");
     }
 
     private static void write(PDPageContentStream cs, float x, float y, String text) throws Exception {
@@ -86,8 +90,8 @@ class ReadingOrderRecoveryTest {
 
     @Test
     void hostileLayoutIsNeverInterleaved() throws Exception {
-        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(), Plan.SCALE);
-        String text = doc.pages().getFirst().rawText().replaceAll("\s+", " ");
+        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(false), Plan.SCALE);
+        String text = flatten(doc.pages().getFirst().rawText());
 
         // Deux lignes consécutives de la colonne gauche ne doivent pas être séparées par du texte
         // de la colonne droite — la signature exacte de l'entrelacement.
@@ -99,10 +103,35 @@ class ReadingOrderRecoveryTest {
                         + text.substring(first, Math.min(second + 20, text.length())));
     }
 
+    /**
+     * Seconde signature : lignes de base alignées, donc colonnes fusionnées dans la même ligne.
+     * C'est le symptôme « customiza-<espaces>lack the necessary » cité par l'issue #31.
+     */
+    @Test
+    void mergedColumnsLayoutIsNeverInterleaved() throws Exception {
+        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(true), Plan.SCALE);
+        String text = flatten(doc.pages().getFirst().rawText());
+
+        int first = text.indexOf("GAUCHE ligne 0");
+        int second = text.indexOf("GAUCHE ligne 1");
+        assertTrue(first >= 0 && second > first, "les deux lignes de gauche doivent etre presentes");
+        assertTrue(!text.substring(first, second).contains("DROITE"),
+                "les colonnes sont restees cousues dans la meme ligne : "
+                        + text.substring(first, Math.min(second + 20, text.length())));
+    }
+
+    @Test
+    void mergedColumnsLayoutLeavesNoSuspectLine() throws Exception {
+        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(true), Plan.SCALE);
+
+        assertTrue(doc.pages().getFirst().reorderSuspectLines().isEmpty(),
+                "lignes suspectes restantes : " + doc.pages().getFirst().reorderSuspectLines());
+    }
+
     /** Le verdict d'ordre de lecture doit être propre : c'est ce que la boucle garantit. */
     @Test
     void hostileLayoutLeavesNoSuspectLine() throws Exception {
-        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(), Plan.SCALE);
+        ExtractedDocument doc = extractor.extract(hostileTwoColumnPdf(false), Plan.SCALE);
 
         assertTrue(doc.pages().getFirst().reorderSuspectLines().isEmpty(),
                 "lignes suspectes restantes : " + doc.pages().getFirst().reorderSuspectLines());

@@ -241,9 +241,21 @@ Demonstrated by deliberately degrading `CANDIDATE_TOLERANCE_RATIO` to 10 %, the 
 resnet p5 and p11 interleaved: with the loop, both come out clean and corpus manual-review chunks
 stay at 8. The geometry can be wrong and the output is still right.
 
-**Known gap**: the loop only corrects *line-level* interleaving (alternating line starts). When two
-columns share their baselines exactly, they merge into a single line with wide internal spaces — a
-different signature, seen by palier 1 of #30 and not yet repaired by the loop.
+**Two signatures, both handled.** Stitched columns leave a different trace depending on whether
+their baselines coincide:
+
+- *baselines differ* → line starts **alternate** between two anchors (`analyseAlternatingColumns`);
+- *baselines coincide* → the columns merge **inside** one line, separated by a wide internal blank
+  (`analyseMergedColumns`) — the `customiza-␣␣␣␣lack the necessary` symptom quoted by the issue.
+
+Only one shows at a time, so the analysis cascades. The second is detected geometrically, not from
+the text: `assembleAsSingleColumn` records each line's widest internal gap, and a gap recurring at
+the *same* abscissa across ≥ 50 % of lines is a gutter. Tables produce aligned internal blanks too —
+the high share requirement separates them (a gutter runs the whole body, a table spans part of the
+page), and any re-assembly that turns the page tabular is rejected outright.
+
+Corpus after both signatures: **0 pages with suspect lines**, manual-review chunks at 8 (all from
+palier 1), table fixtures untouched.
 
 ## Key architectural detail: header/footer cleaning
 

@@ -90,10 +90,29 @@ public class PdfTextExtractorService {
      */
     private static final int   MAX_REASSEMBLY_ATTEMPTS = 3;
 
+    // ── Seconde signature : colonnes fusionnées dans une même ligne ──────────────────────
+    /**
+     * Écart interne (pt) à partir duquel un blanc dans une ligne cesse d'être une espace mot. Une
+     * espace vaut ~5 pt, une gouttière ~12 pt et plus.
+     */
+    private static final float MERGED_COLUMN_MIN_GAP_PT = 12f;
+    /**
+     * Part des lignes devant présenter le blanc à la <em>même</em> abscisse. Élevée à dessein :
+     * une gouttière traverse presque tout le corps de la page, alors qu'un tableau n'occupe qu'une
+     * partie des lignes — c'est ce qui les distingue.
+     */
+    private static final float MERGED_COLUMN_MIN_SHARE = 0.50f;
+
     /** Texte reconstruit d'une page + ses lignes suspectes d'ordre de lecture (texte exact). */
     private record PageExtraction(String text, Set<String> reorderSuspectLines) {}
     /** Résultat d'assemblage : texte + X et texte de chaque ligne, dans l'ordre de lecture produit. */
-    private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts) {}
+    private record Assembled(String text, List<Float> lineStartX, List<String> lineTexts,
+                             List<Float> lineGapX) {
+
+        static Assembled empty() {
+            return new Assembled("", List.of(), List.of(), List.of());
+        }
+    }
 
     /**
      * Verdict de l'oracle d'ordre de lecture : les lignes suspectes, et — quand un entrelacement est
@@ -229,7 +248,7 @@ public class PdfTextExtractorService {
 
         List<Band> bands = pageGeometryAnalyzer.columnBands(fragments, pageWidth, pageHeight);
         Assembled assembled = assembleAsBands(bands, pageNum);
-        ReadingOrder verdict = analyseReadingOrder(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+        ReadingOrder verdict = analyseReadingOrder(assembled, pageWidth);
 
         if (log.isDebugEnabled() && bands.stream().anyMatch(b -> b.columns() > 1)) {
             log.debug("Page {} — {} band(s): {}", pageNum, bands.size(),
@@ -241,7 +260,7 @@ public class PdfTextExtractorService {
         // deux colonnes cousues.
         if (verdict.interleaved()) {
             assembled = reassembleUntilReadable(fragments, assembled, verdict, pageWidth, pageHeight, pageNum);
-            verdict = analyseReadingOrder(assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+            verdict = analyseReadingOrder(assembled, pageWidth);
         }
 
         return new PageExtraction(assembled.text(), verdict.suspectLines());
@@ -272,7 +291,10 @@ public class PdfTextExtractorService {
 
         for (float split : reassemblyCandidates(fragments, nominalVerdict, pageWidth, pageHeight)) {
             Assembled attempt = assembleAsColumns(fragments, new float[]{split});
-            int score = computeSuspectLines(attempt.lineStartX(), attempt.lineTexts(), pageWidth).size();
+            // Un découpage qui transforme la page en structure tabulaire a coupé un tableau en
+            // deux plutôt que séparé deux colonnes : on l'écarte quoi qu'en dise le score.
+            if (looksLikeTable(attempt.text())) continue;
+            int score = analyseReadingOrder(attempt, pageWidth).suspectLines().size();
             if (score < bestScore) {
                 best = attempt;
                 bestScore = score;
@@ -318,6 +340,7 @@ public class PdfTextExtractorService {
         StringBuilder out = new StringBuilder(8192);
         List<Float>  lineStartX = new ArrayList<>();
         List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
 
         for (Band band : bands) {
             Assembled part = band.columns() == 1
@@ -336,8 +359,9 @@ public class PdfTextExtractorService {
             out.append(part.text());
             lineStartX.addAll(part.lineStartX());
             lineTexts.addAll(part.lineTexts());
+            lineGapX.addAll(part.lineGapX());
         }
-        return new Assembled(out.toString().strip(), lineStartX, lineTexts);
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts, lineGapX);
     }
 
     /**
@@ -355,11 +379,28 @@ public class PdfTextExtractorService {
      * chunking.
      */
     Set<String> computeSuspectLines(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
-        return analyseReadingOrder(lineStartX, lineTexts, pageWidth).suspectLines();
+        return analyseAlternatingColumns(lineStartX, lineTexts, pageWidth).suspectLines();
     }
 
-    /** Variante complète : lignes suspectes <em>et</em> abscisse de gouttière déduite. */
-    private ReadingOrder analyseReadingOrder(List<Float> lineStartX, List<String> lineTexts, float pageWidth) {
+    /**
+     * Verdict complet sur un assemblage : cherche les <strong>deux</strong> signatures
+     * d'entrelacement, et renvoie dans les deux cas l'abscisse de gouttière déduite.
+     *
+     * <p>Deux colonnes cousues laissent deux traces distinctes selon que leurs lignes de base
+     * coïncident ou non : si elles diffèrent, les débuts de ligne <em>alternent</em> ; si elles
+     * coïncident, les colonnes fusionnent <em>dans</em> la même ligne, séparées par un large blanc
+     * interne. Une seule des deux se voit à la fois, d'où l'examen en cascade.
+     */
+    private ReadingOrder analyseReadingOrder(Assembled assembled, float pageWidth) {
+        ReadingOrder alternating = analyseAlternatingColumns(
+                assembled.lineStartX(), assembled.lineTexts(), pageWidth);
+        if (alternating.interleaved()) return alternating;
+        return analyseMergedColumns(assembled.lineGapX(), assembled.lineTexts(), pageWidth);
+    }
+
+    /** Première signature : les débuts de ligne alternent entre deux bords de colonne. */
+    private ReadingOrder analyseAlternatingColumns(List<Float> lineStartX, List<String> lineTexts,
+                                                   float pageWidth) {
         int n = Math.min(lineStartX.size(), lineTexts.size());
         if (n < READING_ORDER_MIN_LINES) return ReadingOrder.CLEAN;
 
@@ -415,6 +456,46 @@ public class PdfTextExtractorService {
         // Le milieu des deux bords de colonne : il tombe forcément entre les deux colonnes, donc
         // sépare correctement leurs fragments par leur milieu.
         return new ReadingOrder(suspect, (left + right) / 2f);
+    }
+
+    /**
+     * Seconde signature : les deux colonnes ont fusionné <em>dans</em> la même ligne. Quand leurs
+     * lignes de base coïncident, l'assemblage mono les concatène au lieu de les alterner, laissant
+     * un blanc large et récurrent à la position de la gouttière (le symptôme
+     * « customiza-&nbsp;&nbsp;&nbsp;&nbsp;lack the necessary » de l'issue #31).
+     *
+     * <p>Un tableau produit lui aussi des blancs internes alignés : deux gardes l'en distinguent.
+     * D'une part le blanc doit se retrouver sur au moins {@link #MERGED_COLUMN_MIN_SHARE} des
+     * lignes — une gouttière traverse tout le corps, un tableau n'occupe qu'une partie de la page.
+     * D'autre part le ré-assemblage qui suivra est rejeté s'il produit une structure tabulaire.
+     */
+    private ReadingOrder analyseMergedColumns(List<Float> lineGapX, List<String> lineTexts,
+                                              float pageWidth) {
+        int n = Math.min(lineGapX.size(), lineTexts.size());
+        if (n < READING_ORDER_MIN_LINES) return ReadingOrder.CLEAN;
+
+        List<Float> gaps = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            if (!Float.isNaN(lineGapX.get(i))) gaps.add(lineGapX.get(i));
+        }
+        if (gaps.size() < Math.ceil(MERGED_COLUMN_MIN_SHARE * n)) return ReadingOrder.CLEAN;
+
+        // Les blancs doivent se regrouper autour d'une MÊME abscisse : c'est ce qui fait une
+        // gouttière plutôt qu'une ponctuation de mise en page dispersée.
+        List<float[]> clusters = anchors(gaps, gaps.size());
+        float[] dominant = clusters.getFirst();
+        if (dominant[1] < Math.ceil(MERGED_COLUMN_MIN_SHARE * n)) return ReadingOrder.CLEAN;
+
+        Set<String> suspect = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            float gapX = lineGapX.get(i);
+            if (!Float.isNaN(gapX) && Math.abs(gapX - dominant[0]) <= ANCHOR_TOLERANCE_PT) {
+                String line = lineTexts.get(i).strip();
+                if (line.length() >= MIN_SUSPECT_LINE_LEN) suspect.add(line);
+            }
+        }
+        if (suspect.isEmpty()) return ReadingOrder.CLEAN;
+        return new ReadingOrder(suspect, dominant[0]);
     }
 
     /**
@@ -578,7 +659,7 @@ public class PdfTextExtractorService {
      * entre fragments d'une même ligne.
      */
     private Assembled assembleAsSingleColumn(List<Fragment> fragments) {
-        if (fragments.isEmpty()) return new Assembled("", List.of(), List.of());
+        if (fragments.isEmpty()) return Assembled.empty();
 
         List<Fragment> sorted = new ArrayList<>(fragments);
         sorted.sort(Comparator.comparingDouble(Fragment::y)
@@ -587,8 +668,11 @@ public class PdfTextExtractorService {
         StringBuilder out = new StringBuilder(8192);
         List<Float>  lineStartX = new ArrayList<>();
         List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
         StringBuilder line = new StringBuilder();
         Fragment prev = null;
+        float widestGap = 0f;
+        float widestGapX = Float.NaN;
 
         for (Fragment f : sorted) {
             if (prev == null) {
@@ -596,11 +680,21 @@ public class PdfTextExtractorService {
                 line.append(f.text());
                 lineStartX.add(f.xStart());
             } else if (Math.abs(f.y() - prev.y()) <= SAME_LINE_TOLERANCE_PT) {
+                // Écart interne : deux colonnes fusionnées dans une même ligne laissent ici
+                // un blanc bien plus large qu'une espace mot. On retient le plus large de la ligne.
+                float gap = f.xStart() - prev.xEnd();
+                if (gap > widestGap) {
+                    widestGap = gap;
+                    widestGapX = (prev.xEnd() + f.xStart()) / 2f;
+                }
                 String sp = interFragmentSpacing(prev, f);
                 out.append(sp).append(f.text());
                 line.append(sp).append(f.text());
             } else {
                 lineTexts.add(line.toString());
+                lineGapX.add(widestGap >= MERGED_COLUMN_MIN_GAP_PT ? widestGapX : Float.NaN);
+                widestGap = 0f;
+                widestGapX = Float.NaN;
                 line.setLength(0);
                 out.append('\n').append(f.text());
                 line.append(f.text());
@@ -608,8 +702,11 @@ public class PdfTextExtractorService {
             }
             prev = f;
         }
-        if (prev != null) lineTexts.add(line.toString());
-        return new Assembled(out.toString().strip(), lineStartX, lineTexts);
+        if (prev != null) {
+            lineTexts.add(line.toString());
+            lineGapX.add(widestGap >= MERGED_COLUMN_MIN_GAP_PT ? widestGapX : Float.NaN);
+        }
+        return new Assembled(out.toString().strip(), lineStartX, lineTexts, lineGapX);
     }
 
     /**
@@ -632,6 +729,7 @@ public class PdfTextExtractorService {
         StringBuilder out = new StringBuilder(8192);
         List<Float>  lineStartX = new ArrayList<>();
         List<String> lineTexts  = new ArrayList<>();
+        List<Float>  lineGapX   = new ArrayList<>();
         for (List<Fragment> bucket : buckets) {
             Assembled col = assembleAsSingleColumn(bucket);
             if (col.text().isBlank()) continue;
@@ -639,8 +737,9 @@ public class PdfTextExtractorService {
             out.append(col.text());
             lineStartX.addAll(col.lineStartX());
             lineTexts.addAll(col.lineTexts());
+            lineGapX.addAll(col.lineGapX());
         }
-        return new Assembled(out.toString(), lineStartX, lineTexts);
+        return new Assembled(out.toString(), lineStartX, lineTexts, lineGapX);
     }
 
     /**
