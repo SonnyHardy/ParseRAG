@@ -135,9 +135,18 @@ implementation must honour it — the pipeline has no other safety net.
 Two implementations, selected by `parserag.vision.provider` via `@ConditionalOnProperty` (exactly one
 bean at startup, so a typo surfaces as `NoSuchBeanDefinitionException` rather than silent fallthrough):
 
-- **`GeminiVisionFallbackService`** (`gemini`, **default**) — Gemini 2.5 Flash-Lite via the official
+- **`GeminiVisionFallbackService`** (`gemini`, **default**) — Gemini 3.5 Flash-Lite via the official
   `com.google.genai:google-genai` SDK. Passes a `responseSchema` (structured outputs) so the JSON
-  shape is enforced by the API, and sets `thinkingBudget = 0` (transcription, not reasoning).
+  shape is enforced by the API, and sets `thinkingLevel = minimal` (transcription, not reasoning).
+  Mind the generation gap: 3.x wants `thinkingLevel` and rejects the `thinkingBudget` of the 2.5
+  era with a `400 INVALID_ARGUMENT` — measured, both ways round, in issue #48.
+
+  **Do not retry `gemini-2.5-flash-lite`** for the sake of its lower price (issue #48, 20/08/2026):
+  `generateContent` answers `404 — no longer available to new users`. The whole 2.5 line is closed
+  to accounts that were not already using it. Note the trap that cost a false start: the metadata
+  endpoint `GET /v1beta/models/gemini-2.5-flash-lite` answers **200** and the model is listed in the
+  catalogue — only a real generation call reveals the refusal. Probe model access with
+  `generateContent`, never with a metadata read.
 - **`OpenAiVisionFallbackService`** (`openai`) — the historical GPT-4o mini path, kept only to compare
   extraction quality on the same corpus before being deleted (issue #28).
 
