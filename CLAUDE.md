@@ -250,9 +250,14 @@ their baselines coincide:
 
 Only one shows at a time, so the analysis cascades. The second is detected geometrically, not from
 the text: `assembleAsSingleColumn` records each line's widest internal gap, and a gap recurring at
-the *same* abscissa across ≥ 50 % of lines is a gutter. Tables produce aligned internal blanks too —
-the high share requirement separates them (a gutter runs the whole body, a table spans part of the
-page), and any re-assembly that turns the page tabular is rejected outright.
+the *same* abscissa across ≥ 50 % of lines is a gutter.
+
+Tables produce aligned internal blanks too, and splitting one would destroy it. What protects them
+is that 50 % share requirement alone — a gutter runs the whole body, a table spans a few lines. There
+is **no** post-hoc guard on the re-assembled text: that would need a reliable tabular-structure
+detector, and `looksLikeTable` is still a stub returning `false` (issue #9). Protection is therefore
+empirical, verified on the `table1` and `tables_examples` fixtures (outputs unchanged), not
+structural — worth re-checking whenever these thresholds move.
 
 Corpus after both signatures: **0 pages with suspect lines**, manual-review chunks at 8 (all from
 palier 1), table fixtures untouched.

@@ -282,6 +282,14 @@ public class PdfTextExtractorService {
      *
      * <p>Coût : le PDF n'est pas relu. Seuls l'histogramme et le tri sont rejoués sur des fragments
      * déjà en mémoire, soit ~0,2 ms par essai contre ~10 ms pour lire la page.
+     *
+     * <p><strong>Et les tableaux ?</strong> Un tableau ressemble à des colonnes : le découper le
+     * détruirait. Ce n'est pas cette boucle qui l'en protège mais la <em>détection</em>, en amont —
+     * {@link #MERGED_COLUMN_MIN_SHARE} exige que le blanc traverse la moitié des lignes de la page,
+     * ce qu'une gouttière fait et qu'un tableau, cantonné à quelques lignes, ne fait pas. Une garde
+     * a posteriori sur le résultat supposerait un détecteur de structure tabulaire fiable
+     * ({@code looksLikeTable} est encore un stub, cf. issue #9). Vérifié sur les fixtures
+     * {@code table1} et {@code tables_examples} : sorties inchangées.
      */
     private Assembled reassembleUntilReadable(List<Fragment> fragments, Assembled nominal,
                                               ReadingOrder nominalVerdict, float pageWidth,
@@ -291,9 +299,6 @@ public class PdfTextExtractorService {
 
         for (float split : reassemblyCandidates(fragments, nominalVerdict, pageWidth, pageHeight)) {
             Assembled attempt = assembleAsColumns(fragments, new float[]{split});
-            // Un découpage qui transforme la page en structure tabulaire a coupé un tableau en
-            // deux plutôt que séparé deux colonnes : on l'écarte quoi qu'en dise le score.
-            if (looksLikeTable(attempt.text())) continue;
             int score = analyseReadingOrder(attempt, pageWidth).suspectLines().size();
             if (score < bestScore) {
                 best = attempt;
