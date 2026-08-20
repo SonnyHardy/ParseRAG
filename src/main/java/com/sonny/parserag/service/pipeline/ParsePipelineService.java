@@ -1,6 +1,5 @@
 package com.sonny.parserag.service.pipeline;
 
-import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.exception.ParseRagException;
 import com.sonny.parserag.model.domain.Chunk;
@@ -74,8 +73,7 @@ public class ParsePipelineService {
      * chemins, succès comme échec, sinon le taux d'erreur par plan serait aveugle aux échecs.
      * L'exception est toujours relancée telle quelle — l'instrumentation n'altère aucun comportement.
      */
-    public ParseResponse process(MultipartFile file, ApiKey apiKey) {
-        Plan plan = apiKey != null ? apiKey.getPlan() : Plan.FREE;
+    public ParseResponse process(MultipartFile file, Plan plan) {
         long startTime = System.currentTimeMillis();
 
         log.info("Pipeline start — file: '{}', size: {} bytes, plan: {}",

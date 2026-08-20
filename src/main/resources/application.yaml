@@ -183,17 +183,31 @@ parserag:
     quality-threshold: 0.75      # qualité sémantique min d'une grille Tabula borderless ; en dessous → fallback vision
     max-pages-per-document: 20
 
+  # Integration a la place de marche RapidAPI (issue #54) : c'est elle qui authentifie le
+  # consommateur, applique le quota de son plan et facture. Sans RAPIDAPI_PROXY_SECRET,
+  # l'integration est inactive et seule la cle interne authentifie (dev, admin).
+  rapidapi:
+    proxy-secret: ${RAPIDAPI_PROXY_SECRET:}
+    # Second slot accepte en parallele : sans lui, toute rotation de secret est une coupure,
+    # le proxy et le backend ne pouvant pas basculer au meme instant.
+    previous-proxy-secret: ${RAPIDAPI_PROXY_SECRET_PREVIOUS:}
+    # X-RapidAPI-Subscription -> plan interne. Les noms viennent du tableau de bord provider et
+    # peuvent changer sans redeploiement ; un nom absent d'ici retombe sur FREE (echec ferme).
+    plan-mapping:
+      BASIC: FREE
+      PRO: STARTER
+      ULTRA: PRO
+      MEGA: SCALE
+
   rate-limit:
+    # Debit par consommateur ET par plan : un bucket par appelant, dont la capacite suit son plan.
+    # RapidAPI cadence deja ses abonnes ; ces paliers sont une seconde barriere et doivent rester au
+    # moins aussi hauts que ceux du listing, sinon ce sont eux qui mordent en premier et le client se
+    # voit refuser un debit qu'il a paye.
     free-requests-per-minute: 10
     starter-requests-per-minute: 30
     pro-requests-per-minute: 100
     scale-requests-per-minute: 300
-
-  quota:
-    free-monthly-docs: 100
-    starter-monthly-docs: 1000
-    pro-monthly-docs: 5000
-    scale-monthly-docs: 20000
 
   chunking:
     max-chunk-size: 2000   # ≈ 512 tokens

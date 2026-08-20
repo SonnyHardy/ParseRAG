@@ -6,11 +6,12 @@
  *     com.fasterxml.jackson.core:jackson-databind:2.18.2
  *
  *   Run:
- *     export API_KEY="your-api-key"
+ *     export API_KEY="your-rapidapi-key"
  *     java -cp "okhttp.jar:okio.jar:kotlin-stdlib.jar:jackson-databind.jar:\
  *               jackson-core.jar:jackson-annotations.jar:." ParseRagExample document.pdf
  *
- * BASE_URL defaults to a local run; point it at your deployment.
+ * BASE_URL defaults to a local run, which expects the self-hosted X-API-Key header.
+ * Through the marketplace: BASE_URL=https://parserag.p.rapidapi.com.
  */
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,6 +35,10 @@ public class ParseRagExample {
     private static final String API_KEY = System.getenv("API_KEY");
 
     private static final MediaType PDF = MediaType.parse("application/pdf");
+
+    /** Through RapidAPI the key travels as X-RapidAPI-Key; a self-hosted instance expects X-API-Key. */
+    private static final String KEY_HEADER =
+            BASE_URL.contains("rapidapi.com") ? "X-RapidAPI-Key" : "X-API-Key";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -91,12 +96,6 @@ public class ParseRagExample {
         System.out.printf("%n%d chunks, %d flagged for manual review%n",
                 result.get("chunks").size(), flagged);
 
-        JsonNode quota = usage();
-        System.out.printf("Quota: %d/%d documents (%s plan), resets %s%n",
-                quota.get("docs_used").asInt(),
-                quota.get("docs_limit").asInt(),
-                quota.get("plan").asText(),
-                quota.get("reset_date").asText());
     }
 
     /** Uploads a PDF and returns the parsed response, or throws with the API error code. */
@@ -108,29 +107,16 @@ public class ParseRagExample {
 
         Request request = new Request.Builder()
                 .url(BASE_URL + "/api/v1/parse")
-                .addHeader("X-API-Key", API_KEY)
+                .addHeader(KEY_HEADER, API_KEY)
                 .post(body)
                 .build();
 
         try (Response response = CLIENT.newCall(request).execute()) {
             // Present on every response, 429 or not: pace yourself without waiting for a rejection.
-            String remaining = response.header("X-RateLimit-Remaining");
+            String remaining = response.header("x-ratelimit-requests-remaining");
             if (remaining != null) {
                 System.err.println("[rate limit] " + remaining + " requests left this minute");
             }
-            return readOrThrow(response);
-        }
-    }
-
-    /** Current cycle consumption. Readable even once the quota is exhausted. */
-    private static JsonNode usage() throws IOException {
-        Request request = new Request.Builder()
-                .url(BASE_URL + "/api/v1/usage")
-                .addHeader("X-API-Key", API_KEY)
-                .get()
-                .build();
-
-        try (Response response = CLIENT.newCall(request).execute()) {
             return readOrThrow(response);
         }
     }
@@ -150,11 +136,14 @@ public class ParseRagExample {
         String code = json.path("error").asText("UNKNOWN");
         String message = json.path("message").asText("");
 
-        // Two different situations share the 429: a rate limit clears within the minute
-        // (Retry-After says when), a monthly quota needs the cycle to reset or a plan upgrade.
-        if (response.code() == 429 && "RATE_LIMIT_EXCEEDED".equals(code)) {
+        // Quota exhausted (from the marketplace) or traffic guard (from ParseRAG). Only the
+        // second is worth retrying, and it says how long to wait.
+        if (response.code() == 429) {
             String retryAfter = response.header("Retry-After");
-            throw new IOException(code + ": " + message + " (retry after " + retryAfter + "s)");
+            if (retryAfter != null) {
+                throw new IOException(code + ": " + message + " (retry after " + retryAfter + "s)");
+            }
+            throw new IOException("Quota exhausted - check your plan on RapidAPI");
         }
 
         throw new IOException(code + ": " + message);

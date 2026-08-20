@@ -1,7 +1,6 @@
 package com.sonny.parserag.service.pipeline;
 
 import com.sonny.parserag.config.AppProperties;
-import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.exception.ParseRagException;
 import com.sonny.parserag.model.domain.Chunk;
@@ -86,17 +85,11 @@ class ParsePipelineMetricsTest {
                 "%PDF-1.4 contenu".getBytes());
     }
 
-    private static ApiKey key(Plan plan) {
-        ApiKey k = new ApiKey();
-        k.setPlan(plan);
-        return k;
-    }
-
     // ── Chemin nominal ────────────────────────────────────────────────────────────────────
 
     @Test
     void successfulParseCountsOutcomeAndTimesEveryStage() {
-        pipeline().process(pdf(), key(Plan.PRO));
+        pipeline().process(pdf(), Plan.PRO);
 
         assertEquals(1, meters.get(ParseRagMetrics.PARSE_TOTAL)
                 .tags("plan", "pro", "outcome", "success", "error_code", "none").counter().count());
@@ -114,7 +107,7 @@ class ParsePipelineMetricsTest {
 
     @Test
     void successfulParseRecordsDocumentVolumetry() {
-        pipeline().process(pdf(), key(Plan.PRO));
+        pipeline().process(pdf(), Plan.PRO);
 
         assertEquals(3, meters.get(ParseRagMetrics.DOCUMENT_PAGES)
                 .tag("plan", "pro").summary().totalAmount(), 1e-9);
@@ -127,8 +120,8 @@ class ParsePipelineMetricsTest {
     }
 
     @Test
-    void requestWithoutApiKeyIsCountedAsFree() {
-        pipeline().process(pdf(), null);
+    void requestOnTheFreePlanIsTaggedFree() {
+        pipeline().process(pdf(), Plan.FREE);
 
         assertEquals(1, meters.get(ParseRagMetrics.PARSE_TOTAL).tag("plan", "free")
                 .counter().count());
@@ -145,7 +138,7 @@ class ParsePipelineMetricsTest {
         MultipartFile notAPdf = new MockMultipartFile("file", "doc.pdf", "application/pdf",
                 "GIF89a".getBytes());
 
-        assertThrows(ParseRagException.class, () -> pipeline().process(notAPdf, key(Plan.FREE)));
+        assertThrows(ParseRagException.class, () -> pipeline().process(notAPdf, Plan.FREE));
 
         assertEquals(1, meters.get(ParseRagMetrics.PARSE_TOTAL)
                 .tags("plan", "free", "outcome", "failure", "error_code", "INVALID_FILE_FORMAT")
@@ -158,7 +151,7 @@ class ParsePipelineMetricsTest {
         // on veut un code fixe, pas le nom de la classe d'exception du jour.
         when(extractor.extract(any(), any())).thenThrow(new IllegalStateException("boom"));
 
-        assertThrows(IllegalStateException.class, () -> pipeline().process(pdf(), key(Plan.SCALE)));
+        assertThrows(IllegalStateException.class, () -> pipeline().process(pdf(), Plan.SCALE));
 
         assertEquals(1, meters.get(ParseRagMetrics.PARSE_TOTAL)
                 .tags("plan", "scale", "outcome", "failure", "error_code", "INTERNAL_ERROR")
@@ -172,7 +165,7 @@ class ParsePipelineMetricsTest {
         when(scannedDetector.scannedPages(any())).thenReturn(Set.of(2));
         when(scannedFallback.process(any(), any(), any(), any())).thenReturn(ScannedExtraction.empty());
 
-        pipeline().process(pdf(), key(Plan.FREE));
+        pipeline().process(pdf(), Plan.FREE);
 
         assertEquals(1, meters.get(ParseRagMetrics.STAGE_DURATION)
                 .tag("stage", "scanned").timer().count());
@@ -188,14 +181,14 @@ class ParsePipelineMetricsTest {
             return List.of();
         });
 
-        pipeline().process(pdf(), key(Plan.PRO));
+        pipeline().process(pdf(), Plan.PRO);
 
         assertEquals(1, meters.get(ParseRagMetrics.VISION_BUDGET_OUT).counter().count());
     }
 
     @Test
     void unusedVisionBudgetReportsNothing() {
-        pipeline().process(pdf(), key(Plan.PRO));
+        pipeline().process(pdf(), Plan.PRO);
 
         assertTrue(meters.find(ParseRagMetrics.VISION_BUDGET_OUT).counters().isEmpty());
     }
@@ -206,7 +199,7 @@ class ParsePipelineMetricsTest {
         // ferait croire à une saturation permanente sur toute installation sans vision.
         props.getVision().setMaxPagesPerDocument(0);
 
-        pipeline().process(pdf(), key(Plan.FREE));
+        pipeline().process(pdf(), Plan.FREE);
 
         assertTrue(meters.find(ParseRagMetrics.VISION_BUDGET_OUT).counters().isEmpty());
     }

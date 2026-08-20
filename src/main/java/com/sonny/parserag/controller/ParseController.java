@@ -1,10 +1,10 @@
 package com.sonny.parserag.controller;
 
-import com.sonny.parserag.entity.ApiKey;
+import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.exception.GlobalExceptionHandler.ErrorResponse;
+import com.sonny.parserag.filter.RequestAttributes;
 import com.sonny.parserag.model.response.ParseResponse;
 import com.sonny.parserag.service.pipeline.ParsePipelineService;
-import com.sonny.parserag.service.usage.UsageTrackingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -35,7 +35,6 @@ import org.springframework.web.multipart.MultipartFile;
 public class ParseController {
 
     private final ParsePipelineService parsePipelineService;
-    private final UsageTrackingService usageTrackingService;
 
     /**
      * Parse un fichier PDF et retourne des chunks structurés
@@ -52,8 +51,8 @@ public class ParseController {
                     structured JSON, and falls back to a vision model on scanned pages.
 
                     Limits: 50 MB per file, and a page cap that depends on your plan (100 pages on \
-                    Free, up to 1000 on Scale). A successful call consumes one document from your \
-                    monthly quota; failed calls do not.""",
+                    Free, up to 1000 on Scale). A successful call counts as one request against your \
+                    subscription quota.""",
             operationId = "parsePdf"
     )
     @ApiResponses({
@@ -66,7 +65,8 @@ public class ParseController {
             @ApiResponse(responseCode = "401", description = "MISSING_API_KEY — no X-API-Key header.",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "403", description = "INVALID_API_KEY — unknown or inactive key.",
+            @ApiResponse(responseCode = "403", description = "INVALID_API_KEY (unknown or inactive key) or INVALID_PROXY_SECRET "
+                            + "(the call did not come through the RapidAPI marketplace).",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "413", description = "FILE_TOO_LARGE — over the 50 MB limit.",
@@ -81,8 +81,9 @@ public class ParseController {
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "429",
-                    description = "RATE_LIMIT_EXCEEDED (see Retry-After) or QUOTA_EXCEEDED "
-                            + "(monthly document quota reached).",
+                    description = "RATE_LIMIT_EXCEEDED — the service-wide traffic guard tripped; "
+                            + "wait Retry-After seconds. Plan quotas are enforced by the marketplace "
+                            + "proxy before the request reaches ParseRAG.",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "500", description = "INTERNAL_ERROR — unexpected failure.",
@@ -105,16 +106,15 @@ public class ParseController {
             @RequestParam("file") @NotNull MultipartFile file,
             HttpServletRequest request
     ) {
-        ApiKey apiKey = (ApiKey) request.getAttribute("apiKey");
-        log.debug("POST /api/v1/parse — '{}' ({} bytes)", file.getOriginalFilename(), file.getSize());
+        // Posé par RapidApiProxyFilter (trafic public) ou par ApiKeyFilter (clé interne) ; le
+        // pipeline n'a pas à savoir lequel des deux. Le null est une garde défensive — filtre
+        // désactivé ou mal ordonné — et se traite comme le plan le plus restrictif.
+        Plan plan = (Plan) request.getAttribute(RequestAttributes.PLAN);
+        if (plan == null) plan = Plan.FREE;
 
-        ParseResponse response = parsePipelineService.process(file, apiKey);
+        log.debug("POST /api/v1/parse — '{}' ({} bytes), plan {}",
+                file.getOriginalFilename(), file.getSize(), plan);
 
-        // Incrément du quota seulement sur parse réussi (les exceptions du pipeline propagent avant).
-        if (apiKey != null) {
-            usageTrackingService.recordSuccessfulParse(apiKey);
-        }
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(parsePipelineService.process(file, plan));
     }
 }

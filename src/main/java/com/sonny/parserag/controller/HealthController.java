@@ -2,6 +2,7 @@ package com.sonny.parserag.controller;
 
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.exception.ParseRagException;
+import com.sonny.parserag.filter.RequestAttributes;
 import com.sonny.parserag.model.response.HealthResponse;
 import com.sonny.parserag.service.health.HealthService;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -60,7 +61,7 @@ public class HealthController {
      * Le refus prend la forme d'un 404 indiscernable d'une URL inexistante — cf. javadoc de classe.
      */
     private void requireAdminKey(HttpServletRequest request) {
-        ApiKey apiKey = (ApiKey) request.getAttribute("apiKey");
+        ApiKey apiKey = (ApiKey) request.getAttribute(RequestAttributes.API_KEY);
 
         if (apiKey == null || !apiKey.isAdmin()) {
             throw new ParseRagException(

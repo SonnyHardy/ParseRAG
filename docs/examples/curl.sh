@@ -2,16 +2,23 @@
 #
 # ParseRAG — parse a PDF with cURL.
 #
-#   export API_KEY="your-api-key"
+#   export API_KEY="your-rapidapi-key"
 #   ./curl.sh document.pdf
 #
-# BASE_URL defaults to a local run; point it at your deployment.
+# BASE_URL defaults to a local run, where the self-hosted key header is used instead.
+# Through the marketplace: BASE_URL=https://parserag.p.rapidapi.com and API_KEY=your RapidAPI key.
 
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:?Set API_KEY first: export API_KEY=your-api-key}"
 FILE="${1:?Usage: ./curl.sh <file.pdf>}"
+
+# Through RapidAPI the key travels as X-RapidAPI-Key; a self-hosted instance expects X-API-Key.
+case "$BASE_URL" in
+  *rapidapi.com*) KEY_HEADER="X-RapidAPI-Key" ;;
+  *)              KEY_HEADER="X-API-Key" ;;
+esac
 
 # ── Parse ─────────────────────────────────────────────────────────────────────
 # -D: dump the response headers to a file so the rate-limit budget can be read
@@ -23,7 +30,7 @@ trap 'rm -f "$HEADERS"' EXIT
 HTTP_CODE="$(
   curl -sS -o response.json -D "$HEADERS" -w '%{http_code}' \
     -X POST "$BASE_URL/api/v1/parse" \
-    -H "X-API-Key: $API_KEY" \
+    -H "$KEY_HEADER: $API_KEY" \
     -F "file=@${FILE};type=application/pdf" \
     --max-time 300
 )"
@@ -39,8 +46,5 @@ fi
 
 python3 -m json.tool < response.json
 
-# ── Current quota ─────────────────────────────────────────────────────────────
-# Never blocked by the quota: readable even once it is exhausted.
-echo
-echo "Usage:"
-curl -sS "$BASE_URL/api/v1/usage" -H "X-API-Key: $API_KEY" | python3 -m json.tool
+# Quota consumption is tracked by RapidAPI: read it on your marketplace dashboard, or from the
+# x-ratelimit-requests-remaining header the proxy adds to every response.

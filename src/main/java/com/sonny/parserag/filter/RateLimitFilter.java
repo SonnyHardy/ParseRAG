@@ -1,6 +1,7 @@
 package com.sonny.parserag.filter;
 
 import com.sonny.parserag.entity.ApiKey;
+import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.observability.ParseRagMetrics;
 import com.sonny.parserag.service.ratelimit.RateLimitService;
 import io.github.bucket4j.ConsumptionProbe;
@@ -19,26 +20,25 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Map;
 
 /**
- * Rate limiting par API key (issue #14).
+ * Garde de débit par consommateur, au débit de son plan (issues #14, #54).
  * <p>
- * Placé dans la chaîne Spring Security <em>après</em> {@link ApiKeyFilter} (a besoin du plan porté
- * par l'attribut {@code apiKey}) et <em>avant</em> {@link QuotaEnforcementFilter} : le contrôle de
- * débit est un check mémoire bon marché, on le fait avant le check quota en base.
+ * Le filtre s'exécute après l'authentification, dont il tire les deux informations dont il a
+ * besoin : l'identité de l'appelant, qui désigne son bucket, et son plan, qui en fixe la capacité.
+ * Il fonctionne indifféremment sur les deux chemins d'authentification — voir
+ * {@link RateLimitService}.
  * <p>
- * Pose sur <strong>chaque</strong> réponse les headers {@code X-RateLimit-Limit/-Remaining/-Reset}.
- * Si le bucket est vide, renvoie {@code 429} avec {@code Retry-After} et un corps JSON au même
- * format {@code {error, message, status}} que {@link QuotaEnforcementFilter} et le handler global
- * (un filtre s'exécute hors du DispatcherServlet : l'exception n'y serait pas interceptée).
+ * <strong>Pas d'en-têtes {@code X-RateLimit-*} sur les réponses normales.</strong> Ils annonçaient
+ * le budget d'un plan ; ce budget est désormais celui de RapidAPI, qui pose ses propres
+ * {@code x-ratelimit-requests-remaining} / {@code -reset}. En publier d'autres, portant un plafond
+ * d'infrastructure sans rapport avec l'abonnement, ne ferait qu'induire le client en erreur. Seul
+ * le {@code 429} porte un {@code Retry-After}, qui lui reste actionnable.
  */
 @Component
 @RequiredArgsConstructor
 public class RateLimitFilter extends OncePerRequestFilter {
-
-    private static final String REQUEST_ATTRIBUTE = "apiKey";
 
     private final RateLimitService rateLimitService;
     private final ObjectMapper objectMapper;
@@ -49,35 +49,54 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
 
-        ApiKey apiKey = (ApiKey) request.getAttribute(REQUEST_ATTRIBUTE);
-        if (apiKey == null) {
-            // ApiKeyFilter garantit normalement une clé ici ; défensif : on laisse passer.
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        int limit = rateLimitService.limitForPlan(apiKey.getPlan());
-        ConsumptionProbe probe = rateLimitService.tryConsume(apiKey);
-
-        long resetEpochSeconds = Instant.now().getEpochSecond()
-                + Duration.ofNanos(probe.getNanosToWaitForRefill()).toSeconds();
-
-        response.setHeader("X-RateLimit-Limit", String.valueOf(limit));
-        response.setHeader("X-RateLimit-Remaining", String.valueOf(Math.max(0, probe.getRemainingTokens())));
-        response.setHeader("X-RateLimit-Reset", String.valueOf(resetEpochSeconds));
+        Plan plan = planOf(request);
+        ConsumptionProbe probe = rateLimitService.tryConsume(consumerOf(request), plan);
 
         if (!probe.isConsumed()) {
-            metrics.rateLimitRejected(apiKey.getPlan());
+            metrics.rateLimitRejected(plan);
             long retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill()).toSeconds();
-            writeRateLimited(response, limit, retryAfter);
+            writeRateLimited(response, rateLimitService.limitForPlan(plan), retryAfter);
             return;
         }
 
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * Plan applicable, posé par le filtre qui a authentifié la requête. Le repli sur le plan le
+     * plus restrictif est une garde défensive : une requête sans plan ne doit pas hériter du débit
+     * le plus large.
+     */
+    private static Plan planOf(HttpServletRequest request) {
+        return request.getAttribute(RequestAttributes.PLAN) instanceof Plan plan ? plan : Plan.FREE;
+    }
+
+    /**
+     * Identité de l'appelant, dans l'ordre de confiance : celle annoncée par RapidAPI — lue
+     * seulement après validation du secret, donc digne de foi — puis l'identifiant de la clé
+     * interne. Le préfixe évite qu'un utilisateur RapidAPI nommé comme un UUID de clé ne partage
+     * son bucket avec elle.
+     * <p>
+     * Le repli {@code anonymous} est une garde défensive : la chaîne garantit qu'une requête
+     * arrivée ici est authentifiée. Il mutualise volontairement le bucket, faute de quoi une
+     * requête non identifiée s'en verrait offrir un neuf à chaque appel.
+     */
+    private static String consumerOf(HttpServletRequest request) {
+        Object user = request.getAttribute(RequestAttributes.RAPIDAPI_USER);
+        if (user instanceof String s && !s.isBlank()) return "rapidapi:" + s;
+
+        Object apiKey = request.getAttribute(RequestAttributes.API_KEY);
+        if (apiKey instanceof ApiKey k && k.getId() != null) return "key:" + k.getId();
+
+        return "anonymous";
+    }
+
+    /**
+     * Un filtre s'exécute hors du DispatcherServlet : on écrit le JSON au format standard
+     * {@code {error, message, status}}, comme les autres filtres et le handler global.
+     */
     private void writeRateLimited(HttpServletResponse response, int limit, long retryAfterSeconds) throws IOException {
-        String message = "Rate limit exceeded (%d req/min). Retry after %d seconds"
+        String message = "Rate limit reached (%d req/min). Retry after %d seconds"
                 .formatted(limit, retryAfterSeconds);
 
         response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());

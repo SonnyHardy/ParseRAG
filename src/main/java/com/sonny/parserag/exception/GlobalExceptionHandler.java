@@ -38,17 +38,6 @@ public class GlobalExceptionHandler {
                 ));
     }
 
-    @ExceptionHandler(QuotaExceededException.class)
-    public ResponseEntity<ErrorResponse> handleQuotaExceeded(QuotaExceededException ex) {
-        return ResponseEntity
-                .status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(new ErrorResponse(
-                        "QUOTA_EXCEEDED",
-                        ex.getMessage(),
-                        HttpStatus.TOO_MANY_REQUESTS.value()
-                ));
-    }
-
     // ── Fichier trop lourd (Spring rejette avant d'atteindre le controller) ──
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
