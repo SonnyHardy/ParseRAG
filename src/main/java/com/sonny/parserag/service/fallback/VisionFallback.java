@@ -13,7 +13,8 @@ import com.sonny.parserag.model.domain.VisionPageResult;
  * </ul>
  *
  * <p>Deux implémentations coexistent, sélectionnées par {@code parserag.vision.provider}
- * (issue #28) : {@link GeminiVisionFallbackService} (défaut) et {@link OpenAiVisionFallbackService}.
+ * (issue #28) : {@link GeminiVisionFallbackService}, seule implémentation depuis le retrait du
+ * provider OpenAI (issue #58).
  *
  * <p><strong>Contrat de dégradation gracieuse</strong> — commun aux implémentations et sur lequel
  * s'appuie tout l'aval ({@code manual_review_needed}) : aucune méthode ne lève d'exception. Vision

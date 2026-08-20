@@ -334,6 +334,41 @@ keys are **restricted to administration**: a non-admin key calling the origin ge
 ./mvnw test            # tests only
 ```
 
+### Run it in Docker
+
+```bash
+docker build -t parserag .
+docker run -p 8080:8080 \
+  -e POSTGRES_HOST=host.docker.internal -e POSTGRES_PORT=5432 \
+  -e POSTGRES_DB=parserag -e POSTGRES_USER=parserag -e POSTGRES_PASSWORD=… \
+  -e ADMIN_KEY_HASH=… -e HEALTH_DISK_PATH=/tmp \
+  parserag
+```
+
+The image runs as a non-root user and carries `fontconfig` plus a base font: PDFBox renders pages to
+images for table extraction and the scanned-page fallback, and a fontless image fails at exactly that
+point — on scanned documents only, in production only.
+
+### Deploy
+
+| Variable | Required | Notes |
+|---|---|---|
+| `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | yes | Flyway migrates on startup |
+| `ADMIN_KEY_HASH` | yes | SHA-256 of your admin key; without it no admin key exists |
+| `RAPIDAPI_PROXY_SECRET` | yes in production | Without it the origin serves anyone who finds its URL |
+| `GOOGLE_API_KEY` | no | Vision fallback; scanned pages are flagged for review without it |
+| `HEALTH_DISK_PATH` | no | Set to `/tmp` in a container — the disk probe must watch the volume PDFBox writes to |
+| `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_AUTH`, `DEPLOY_ENV` | no | Telemetry export |
+
+`railway.json` points Railway at the Dockerfile and at `/actuator/health` — the only unauthenticated
+endpoint, returning a bare `UP`/`DOWN` with no details. The detailed `/api/v1/health` stays
+admin-only.
+
+**Migrations run at startup**, so a deploy that rolls out two instances at once has them both call
+Flyway; Flyway takes a lock, and the second waits. Rolling *back* the application over an already
+migrated schema is not covered by that lock: a migration does not un-apply itself, so plan a
+forward-fix rather than a version rollback.
+
 ### Regenerating the OpenAPI spec
 
 [`docs/openapi.json`](docs/openapi.json) is a committed snapshot, generated from the code by

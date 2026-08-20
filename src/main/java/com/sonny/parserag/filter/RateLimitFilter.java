@@ -44,6 +44,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final ObjectMapper objectMapper;
     private final ParseRagMetrics metrics;
 
+    /**
+     * La sonde de vivacite de l'orchestrateur ne peut pas s'authentifier : elle est le seul chemin
+     * exempte, et sa portee est bornee a un UP/DOWN nu (cf. {@link ProbePaths}).
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return ProbePaths.isLivenessProbe(request);
+    }
+
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                     @NonNull HttpServletResponse response,

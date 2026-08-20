@@ -18,7 +18,10 @@ spring:
       max-request-size: 50MB
 
   datasource:
-    url: jdbc:postgresql://localhost:${POSTGRES_PORT}/${POSTGRES_DB}
+    # POSTGRES_HOST etait defini dans .env mais ignore ici : l'hote etait code en dur sur
+    # localhost, ce qui rend l'application indeployable ailleurs que sur la machine de la base
+    # (issue #58 - decouvert en lancant l'image, ou localhost designe le conteneur lui-meme).
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT}/${POSTGRES_DB}
     username: ${POSTGRES_USER}
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
@@ -88,7 +91,11 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: never   # /api/v1/health (issue #37) reste l'endpoint métier, réservé à l'admin
+      # show-details: never est ce qui rend l'exemption d'authentification acceptable (issue #58) :
+      # /actuator/health est la sonde de l'orchestrateur, qui ne peut pas s'authentifier, et il ne
+      # rend qu'un UP/DOWN nu. /api/v1/health (issue #37) reste l'endpoint metier detaille, reserve
+      # a l'admin.
+      show-details: never
 
   # ATTENTION : chaque signal a son chemin OTLP propre (/v1/metrics, /v1/traces, /v1/logs) — les
   # confondre est la première cause de « rien n'arrive dans Grafana ».
@@ -189,7 +196,7 @@ parserag:
 
   health:
     db-ping-timeout-seconds: 3   # borne chaque sonde base (ping + lecture flyway_schema_history) : sans elle, une base down ferait attendre le connection-timeout Hikari (10 s)
-    disk-path: '.'               # volume surveillé ; à pointer sur java.io.tmpdir si les uploads atterrissent sur un autre disque
+    disk-path: ${HEALTH_DISK_PATH:.}  # volume surveille ; en conteneur, pointer le volume ou PDFBox ecrit ses temporaires (/tmp)
     min-free-disk-mb: 500        # sous ce plancher → disk DOWN (un upload = jusqu'à 50 Mo + temporaires PDFBox)
 
   gemini:
@@ -198,11 +205,6 @@ parserag:
     thinking-level: minimal        # minimal|low|medium|high — transcription structurée, pas de calcul (remplace le thinking-budget de l'ère 2.5)
     max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
     timeout-ms: 60000              # budget par appel (millisecondes : unité de HttpOptions)
-
-  openai:                          # provider historique, conservé pour comparaison (issue #28)
-    api-key: ${OPENAI_API_KEY:}   # vide par défaut en dev
-    model: gpt-4o-mini
-    max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
 
   extraction:
     strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)
@@ -216,7 +218,7 @@ parserag:
 
   vision:
     enabled: true
-    provider: gemini             # gemini | openai — sélectionne l'implémentation du port VisionFallback
+    provider: gemini             # seule implementation depuis le retrait d'OpenAI (issue #58) ; une valeur inconnue fait echouer le demarrage plutot que de laisser le fallback absent
     confidence-threshold: 0.55
     quality-threshold: 0.75      # qualité sémantique min d'une grille Tabula borderless ; en dessous → fallback vision
     max-pages-per-document: 20

@@ -40,21 +40,6 @@
               Le runtime protobuf est rétro-compatible avec du code généré plus ancien : on aligne
               donc sur la version haute, exigée par un seul des deux camps.
             -->
-            <!--
-              Arbitrage swagger-annotations (issue #16). Deux artefacts publient le meme package
-              io.swagger.v3.oas.annotations : swagger-annotations, tire par openai-java en 2.2.31,
-              et swagger-annotations-jakarta, tire par springdoc en 2.2.47. Le classpath n'en
-              retient qu'un, et la version basse gagne : springdoc echoue alors a la generation sur
-              un NoSuchMethodError (Schema.$dynamicRef, apparue apres 2.2.31). On aligne donc la
-              version basse sur la haute — les annotations sont retro-compatibles, openai-java ne
-              s'en sert que pour decrire ses propres modeles.
-            -->
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-annotations</artifactId>
-                <version>2.2.47</version>
-            </dependency>
-
             <dependency>
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
@@ -180,15 +165,6 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math4-legacy</artifactId>
             <version>4.0-beta1</version>
-            <scope>compile</scope>
-        </dependency>
-
-        <!-- OpenAI official Java SDK (vision fallback for borderless tables, issue #9) -->
-        <!-- Source: https://github.com/openai/openai-java -->
-        <dependency>
-            <groupId>com.openai</groupId>
-            <artifactId>openai-java</artifactId>
-            <version>4.41.0</version>
             <scope>compile</scope>
         </dependency>
 

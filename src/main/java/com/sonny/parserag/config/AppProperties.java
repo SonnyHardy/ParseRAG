@@ -27,7 +27,6 @@ public class AppProperties {
     private final Security             security             = new Security();
     private final Parse                parse                = new Parse();
     private final Health               health               = new Health();
-    private final OpenAI               openai               = new OpenAI();
     private final Gemini               gemini               = new Gemini();
     private final Extraction           extraction           = new Extraction();
     private final Tables               tables               = new Tables();
@@ -80,15 +79,6 @@ public class AppProperties {
          */
         @Positive
         private long minFreeDiskMb = 500;
-    }
-
-    @Data
-    public static class OpenAI {
-        private String apiKey;     // OPENAI_API_KEY
-        private String model;
-        /** Tentatives du SDK sur 429 (rate-limit) / 5xx, avec backoff exponentiel. */
-        @Min(0)
-        private int maxRetries = 4;
     }
 
     /** Fallback vision par défaut depuis l'issue #28 (Gemini Flash-Lite). */
@@ -153,9 +143,11 @@ public class AppProperties {
     public static class Vision {
         private boolean enabled;
         /**
-         * Fournisseur du fallback vision : {@code gemini} (défaut) ou {@code openai}. Sélectionne
-         * l'implémentation du port {@code VisionFallback} par {@code @ConditionalOnProperty} —
-         * exactement un bean au démarrage.
+         * Fournisseur du fallback vision. Une seule implémentation depuis l'issue #58
+         * ({@code gemini}) : le provider OpenAI, gardé le temps de comparer les deux sur le corpus
+         * (issue #28), a été retiré une fois Gemini validé. La propriété reste — elle sélectionne le
+         * bean par {@code @ConditionalOnProperty}, ce qui fait échouer le démarrage sur une valeur
+         * inconnue au lieu de laisser le fallback silencieusement absent.
          */
         @NotBlank
         private String  provider = "gemini";
