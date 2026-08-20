@@ -7,6 +7,7 @@ import com.sonny.parserag.model.domain.Chunk;
 import com.sonny.parserag.model.domain.ExtractedDocument;
 import com.sonny.parserag.model.domain.TableResult;
 import com.sonny.parserag.observability.ParseRagMetrics;
+import com.sonny.parserag.observability.ParseRagMetrics.TokenType;
 import com.sonny.parserag.observability.TestMetrics;
 import com.sonny.parserag.service.extraction.PageGeometryAnalyzer;
 import com.sonny.parserag.service.extraction.PdfTextExtractorService;
@@ -14,6 +15,7 @@ import com.sonny.parserag.service.extraction.ScannedPageDetector;
 import com.sonny.parserag.service.fallback.ScannedDocumentFallbackService.ScannedExtraction;
 import com.sonny.parserag.service.processing.ChunkingService;
 import com.sonny.parserag.service.processing.ConfidenceCalculatorService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -68,13 +70,33 @@ class VisionProviderBenchmark {
             "scanned-multicolumn.pdf", "scanned-mixed.pdf", "scanned-figure-only.pdf",
             "scanned-empty.pdf", LONG_DOC);
 
+    /**
+     * Tarifs au million de tokens, relevés le 20/08/2026 sur
+     * <a href="https://ai.google.dev/gemini-api/docs/pricing">la page officielle</a> (palier
+     * payant, inférence standard). À revérifier avant de conclure : un tarif qui a bougé invalide
+     * la comparaison de coût, pas celle de qualité.
+     */
+    private static final Map<String, double[]> PRICE_PER_MTOK = Map.of(
+            "gemini-3.5-flash-lite", new double[]{0.30, 2.50},
+            "gemini-3.1-flash-lite", new double[]{0.25, 1.50},
+            "gemini-2.5-flash-lite", new double[]{0.10, 0.40},
+            "gpt-4o-mini", new double[]{0.15, 0.60});
+
     /** Relevé d'un passage sur une fixture. */
     private record Run(int scannedPages, Set<Integer> visionPages, Set<Integer> reviewPages,
                        int textChunks, int tables, long millis,
-                       List<Chunk> chunks, List<TableResult> extracted) {
+                       List<Chunk> chunks, List<TableResult> extracted,
+                       long promptTokens, long completionTokens) {
     }
 
     private final String provider = env("VISION_PROVIDER", "gemini");
+
+    /**
+     * Registre en mémoire conservé au niveau du harnais : c'est lui qui porte les compteurs de
+     * tokens, seule source du coût réel. Sans registre partagé entre les passes, chaque appel
+     * repartirait de zéro et le rapport ne saurait rien dire de la facture.
+     */
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
 
     @Test
     void benchmark() throws Exception {
@@ -102,7 +124,10 @@ class VisionProviderBenchmark {
             runs.put(fixture, collected);
         }
 
-        Path report = RESULTS.resolve("PHASE4-%s-%s.md".formatted(provider, LocalDate.now()));
+        // Le modèle fait partie du nom : deux campagnes le même jour (comparaison de modèles,
+        // issue #51) s'écraseraient l'une l'autre sans lui.
+        Path report = RESULTS.resolve(
+                "PHASE4-%s-%s-%s.md".formatted(provider, model(props), LocalDate.now()));
         Files.createDirectories(RESULTS);
         Files.writeString(report, renderReport(runs, props));
         System.out.println("Rapport écrit : " + report.toAbsolutePath());
@@ -113,6 +138,11 @@ class VisionProviderBenchmark {
                         ScannedDocumentFallbackService fallback, AppProperties props) {
         ExtractedDocument doc = extractor.extract(pdf, Plan.SCALE);
         Set<Integer> scanned = detector.scannedPages(doc);
+
+        // Les compteurs sont cumulatifs : on prend un delta autour de la passe pour attribuer les
+        // tokens à *cette* fixture plutôt qu'à toute la campagne.
+        long promptBefore = tokens(TokenType.PROMPT);
+        long completionBefore = tokens(TokenType.COMPLETION);
 
         long start = System.currentTimeMillis();
         ScannedExtraction res = fallback.process(pdf, doc, scanned,
@@ -131,7 +161,9 @@ class VisionProviderBenchmark {
 
         return new Run(scanned.size(), visionPages, reviewPages,
                 res.textChunks().size(), res.tables().size(), millis,
-                res.textChunks(), res.tables());
+                res.textChunks(), res.tables(),
+                tokens(TokenType.PROMPT) - promptBefore,
+                tokens(TokenType.COMPLETION) - completionBefore);
     }
 
     // ── Rapport ───────────────────────────────────────────────────────────────────────────
@@ -152,6 +184,8 @@ class VisionProviderBenchmark {
                     fixture.replace(".pdf", ""), r.scannedPages(), r.visionPages().size(),
                     r.reviewPages().size(), r.textChunks(), r.tables(), r.millis() / 1000.0));
         });
+
+        md.append(renderCost(runs, model(props)));
 
         List<Run> longRuns = runs.get(LONG_DOC);
         md.append("\n## Déterminisme — `%s` (%d runs)\n\n".formatted(LONG_DOC, longRuns.size()));
@@ -194,6 +228,53 @@ class VisionProviderBenchmark {
         return md.toString();
     }
 
+    /**
+     * Tokens et cout de la campagne — c'est ce qui permet de comparer deux modeles autrement qu'a
+     * l'impression. Le cout est calcule sur les tokens <em>reellement factures</em> remontes par
+     * l'API, pas sur une estimation a priori.
+     */
+    private String renderCost(Map<String, List<Run>> runs, String model) {
+        long prompt = tokens(TokenType.PROMPT);
+        long completion = tokens(TokenType.COMPLETION);
+        long thoughts = tokens(TokenType.THOUGHTS);
+
+        StringBuilder md = new StringBuilder("\n## Tokens et cout\n\n");
+        md.append("| Fixture | Tokens entree | Tokens sortie |\n|---|---|---|\n");
+        runs.forEach((fixture, list) -> {
+            long in = list.stream().mapToLong(Run::promptTokens).sum();
+            long out = list.stream().mapToLong(Run::completionTokens).sum();
+            md.append("| %s%s | %d | %d |\n".formatted(fixture.replace(".pdf", ""),
+                    list.size() > 1 ? " (%d runs)".formatted(list.size()) : "", in, out));
+        });
+        md.append("| **Total campagne** | **%d** | **%d** |\n".formatted(prompt, completion));
+
+        if (thoughts > 0) {
+            md.append("\n%d tokens de thinking factures en sus — le reglage cense les annuler ne mord pas.\n"
+                    .formatted(thoughts));
+        }
+
+        double[] price = PRICE_PER_MTOK.get(model);
+        if (price == null) {
+            md.append("\n_Tarif inconnu pour `%s` : cout non calcule._\n".formatted(model));
+            return md.toString();
+        }
+        double cost = (prompt / 1_000_000.0) * price[0] + (completion / 1_000_000.0) * price[1];
+        md.append("\nTarif `%s` : $%.2f / $%.2f par million (entree / sortie) → **cout de la campagne : $%.4f**.\n"
+                .formatted(model, price[0], price[1], cost));
+        md.append("Ratio sortie/entree : %.2f — c'est lui qui decide quel ecart de tarif compte.\n"
+                .formatted(prompt == 0 ? 0 : (double) completion / prompt));
+        return md.toString();
+    }
+
+    /** Somme des compteurs de tokens d'un type donne, tous providers et modeles confondus. */
+    private long tokens(TokenType type) {
+        return (long) registry.find(ParseRagMetrics.VISION_TOKENS)
+                .tag("type", type.name().toLowerCase())
+                .counters().stream()
+                .mapToDouble(io.micrometer.core.instrument.Counter::count)
+                .sum();
+    }
+
     /** Première ligne, tronquée : de quoi juger la fidélité sans noyer le rapport. */
     private static String excerpt(String text) {
         String flat = text.replaceAll("\\s+", " ").strip();
@@ -204,7 +285,7 @@ class VisionProviderBenchmark {
 
     private VisionFallback vision(AppProperties props) {
         VisionResponseParser parser = new VisionResponseParser(new ObjectMapper());
-        ParseRagMetrics metrics = TestMetrics.metrics();   // registre en mémoire, aucun export
+        ParseRagMetrics metrics = TestMetrics.metrics(registry);   // registre du harnais, aucun export
         return "openai".equals(provider)
                 ? new OpenAiVisionFallbackService(props, parser, metrics)
                 : new GeminiVisionFallbackService(props, parser, metrics);

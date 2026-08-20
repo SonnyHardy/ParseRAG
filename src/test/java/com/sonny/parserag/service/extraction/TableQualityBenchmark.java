@@ -67,6 +67,10 @@ class TableQualityBenchmark {
         p.getVision().setQualityThreshold(QUALITY_THRESHOLD);
         p.getVision().setMaxPagesPerDocument(50);
         p.getGemini().setApiKey(geminiKey);
+        // Modele surchargeable comme dans VisionProviderBenchmark : c'est ce qui permet de
+        // comparer deux modeles sur le meme corpus (issue #51).
+        String model = System.getenv("GEMINI_MODEL");
+        if (model != null && !model.isBlank()) p.getGemini().setModel(model);
         return p;
     }
 
@@ -83,7 +87,9 @@ class TableQualityBenchmark {
         }
 
         Files.createDirectories(RESULTS);
-        Path report = RESULTS.resolve("TABLES-" + LocalDate.now() + ".md");
+        // Le modele fait partie du nom : deux passes le meme jour s'ecraseraient sans lui.
+        Path report = RESULTS.resolve(
+                "TABLES-" + props("").getGemini().getModel() + "-" + LocalDate.now() + ".md");
         Files.writeString(report, render(rows));
         System.out.println("Rapport ecrit : " + report.toAbsolutePath());
 
