@@ -229,8 +229,10 @@ Branch on `error`, which is stable. `message` is for humans and may change betwe
 | `DOCUMENT_TOO_LONG`    | 422  | More pages than your plan allows.                                 |
 | `RATE_LIMIT_EXCEEDED`  | 429  | You are sending too fast. Wait `Retry-After` seconds.             |
 | `INVALID_PROXY_SECRET` | 403  | The call did not come through the RapidAPI marketplace.            |
+| `MARKETPLACE_REQUIRED` | 403  | A direct API key was used while the marketplace is serving traffic. Go through RapidAPI. |
 | `NOT_FOUND`            | 404  | No such endpoint.                                                 |
 | `INTERNAL_ERROR`       | 500  | Unexpected server-side failure. Safe to retry.                    |
+| `SERVICE_BUSY`         | 503  | The server is at capacity. Retry shortly — parses are bounded to protect memory. |
 | `DATABASE_UNAVAILABLE` | 503  | The service could not verify your key. Retry shortly.             |
 
 Quota rejections do not appear in this table: they are returned by the RapidAPI proxy before the
@@ -287,6 +289,9 @@ POSTGRES_DB=parserag
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your-password
 
+# Your own admin key, as a SHA-256 hash — see below
+ADMIN_KEY_HASH=
+
 # Optional
 SERVER_PORT=8080
 GOOGLE_API_KEY=          # vision fallback for scanned pages; without it those pages are flagged for manual review
@@ -299,16 +304,28 @@ Then:
 ./mvnw spring-boot:run
 ```
 
-Flyway creates the schema on startup and seeds a development key: **`test-key-dev-123`**. That is
-enough for a first call:
+**No key is seeded** — pick your own and give ParseRAG its hash, never the key itself:
+
+```bash
+KEY="$(openssl rand -hex 24)"                    # your key; keep it
+printf '%s' "$KEY" | sha256sum                   # put this hash in ADMIN_KEY_HASH
+```
+
+On startup, ParseRAG creates the matching admin key if it does not exist yet. Then:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/parse \
-  -H "X-API-Key: test-key-dev-123" \
+  -H "X-API-Key: $KEY" \
   -F "file=@document.pdf"
 ```
 
-The seeded key is on the `FREE` plan, with the limits listed above.
+Leave `ADMIN_KEY_HASH` empty and no key is created at all: the API starts, says so in the logs, and
+`GET /api/v1/health` stays unreachable. A missing setting should cost you a diagnostic, never mint a
+credential.
+
+Once `RAPIDAPI_PROXY_SECRET` is set — that is, once the marketplace is serving your traffic — direct
+keys are **restricted to administration**: a non-admin key calling the origin gets
+`403 MARKETPLACE_REQUIRED`.
 
 ### Build and test
 
@@ -326,8 +343,8 @@ so no documentation endpoint is exposed in production:
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
 
-# in another shell — the API key is required, no path is exempt from authentication
-curl -sS -H "X-API-Key: test-key-dev-123" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
+# in another shell — $KEY is your admin key (see ADMIN_KEY_HASH); no path is exempt
+curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
 ```
 
 The `json.tool` pass is what keeps the committed file readable and its diffs reviewable — springdoc

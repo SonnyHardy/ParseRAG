@@ -1,5 +1,6 @@
 package com.sonny.parserag.filter;
 
+import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.observability.ParseRagMetrics;
 import com.sonny.parserag.observability.ParseRagMetrics.AuthFailure;
@@ -30,9 +31,15 @@ import java.util.Optional;
  * Authentification par clé interne.
  * <p>
  * Depuis le passage par la place de marché (issue #54), ce n'est plus le chemin principal mais le
- * chemin <em>interne</em> : administration ({@code GET /api/v1/health}), développement local, et
- * transition tant que le listing RapidAPI n'est pas publié. Le trafic public est authentifié en
- * amont par {@link RapidApiProxyFilter}, qui pose alors le plan lui-même.
+ * chemin <em>interne</em> : administration ({@code GET /api/v1/health}) et développement local.
+ * Le trafic public est authentifié en amont par {@link RapidApiProxyFilter}, qui pose alors le plan
+ * lui-même.
+ * <p>
+ * <strong>Ce chemin se referme de lui-même</strong> (issue #56) : dès qu'un secret proxy est
+ * configuré — c'est-à-dire dès que la place de marché est en service — seule une clé {@code admin}
+ * est acceptée ici. Sans ce verrou, n'importe quelle clé interne servirait l'origine en direct et
+ * contournerait quota et facturation. Aucun drapeau à basculer : la règle suit la configuration,
+ * donc le développement local (secret vide) garde son comportement.
  */
 @Slf4j
 @Component
@@ -44,6 +51,7 @@ public class ApiKeyFilter extends OncePerRequestFilter {
     private final ApiKeyRepository apiKeyRepository;
     private final ObjectMapper objectMapper;
     private final ParseRagMetrics metrics;
+    private final AppProperties appProperties;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -91,6 +99,23 @@ public class ApiKeyFilter extends OncePerRequestFilter {
         if (apiKey.isEmpty()) {
             metrics.authFailure(AuthFailure.INVALID_KEY);
             writeError(response, HttpStatus.FORBIDDEN, "INVALID_API_KEY", "Invalid or inactive API key");
+            return;
+        }
+
+        /*
+         * Place de marche active : le chemin direct se referme sur l'administration (issue #56).
+         * Une cle interne valide mais non-admin ne doit plus servir l'origine, sinon elle offre
+         * un contournement complet de RapidAPI - ni quota, ni facturation, ni analytics.
+         *
+         * Le code renvoye dit quoi faire plutot que de laisser deviner : celui qui detient une
+         * cle legitime doit passer par la place de marche. Il n'apprend rien d'exploitable au
+         * passage, le secret proxy lui manquant de toute facon.
+         */
+        if (appProperties.getRapidapi().isConfigured() && !apiKey.get().isAdmin()) {
+            metrics.authFailure(AuthFailure.MARKETPLACE_REQUIRED);
+            log.warn("Cle interne non-admin presentee en direct alors que RapidAPI est actif");
+            writeError(response, HttpStatus.FORBIDDEN, "MARKETPLACE_REQUIRED",
+                    "Direct API keys are reserved for administration. Use the RapidAPI marketplace.");
             return;
         }
 

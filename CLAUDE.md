@@ -49,11 +49,18 @@ Telemetry (issue #38) is off unless `OTEL_ENABLED=true`; when on it also needs
 
 Postgres must be reachable. Flyway runs migrations from `src/main/resources/db/migration` on
 startup (`baseline-on-migrate: true`, `ddl-auto: none` — schema is owned by Flyway, never Hibernate).
-`V1__create_api_keys_table.sql` seeds a dev key: the raw key is `test-key-dev-123` (its SHA-256 is
-what's stored). Pass it as `X-API-Key: test-key-dev-123`. That key is also the **admin** key
-(`V3__add_admin_to_api_keys.sql`) — the only one allowed on `/api/v1/health`. Note V1's stored hash
-was actually SHA-256 of `123`, not of the documented key; V3 corrects it in place (V1 itself is left
-untouched — editing an applied migration breaks Flyway checksum validation).
+**No key is seeded any more** (issue #56). V1 did seed one, and this file used to claim that V3
+corrected its hash and granted it admin — **it never did**: V3 only adds the column with
+`DEFAULT false`. The development database had been fixed by hand, so a fresh production database
+would have carried a live key whose secret was literally `123`, its hash readable in this repo. That
+gap between the documentation and the migrations is exactly how the defect survived; V4 deletes the
+row (V1 is left untouched — editing an applied migration breaks Flyway checksum validation).
+
+The admin key now comes from `ADMIN_KEY_HASH` at startup (`AdminKeyBootstrap`): the environment
+provides the **SHA-256**, never the key. Empty means no admin key is created and `/api/v1/health`
+stays unreachable — a configuration gap must cost a diagnostic, not mint a credential. The bootstrap
+is idempotent, restores a key that lost its `admin`/`active` flag, and treats a concurrent insert as
+someone else's success.
 
 ## Request flow
 
@@ -105,12 +112,25 @@ Two authentication paths, one per request, in this order:
    admin and pre-listing path.
 2. **`ApiKeyFilter`** (internal path) — SHA-256 of the key, looked up in Postgres. It short-circuits
    when the proxy already set `plan`, so the marketplace path costs **no database read at all**.
+   **This path closes itself** (issue #56): as soon as a proxy secret is configured — i.e. the
+   marketplace is serving traffic — only an `admin` key is accepted here, everything else gets
+   `403 MARKETPLACE_REQUIRED`. Without that lock, any internal key served the origin directly and
+   bypassed quota and billing entirely. No flag to flip: the rule follows the configuration, so local
+   development (empty secret) is unaffected.
    Because that lookup is a DB read, the filter catches `DataAccessException` **and**
    `TransactionException` around it and writes a `503 DATABASE_UNAVAILABLE` itself: Spring Data's
    repository is `@Transactional`, so a down Postgres usually surfaces as
    `CannotCreateTransactionException`, which is *not* a `DataAccessException`. Without that catch the
    exception escapes the DispatcherServlet and the client gets Spring Boot's default `/error` 500 —
    including on `/api/v1/health`, whose own `503` is never reached since the controller never runs.
+
+`ParseConcurrencyLimiter` bounds **simultaneous** parses (`parserag.parse.max-concurrent`, issue
+ #56) and refuses beyond it with `503 SERVICE_BUSY` after a short wait. Rate limiting counts requests
+per minute; what saturates the origin is requests *in flight*: a parse holds 50 MB in memory, reopens
+the PDF six times and renders pages at ~9 MB each. With Tomcat's default 200 threads, nothing stopped
+200 concurrent parses from exhausting the heap — `server.tomcat.threads.max` is now aligned on that
+bound, and `server.shutdown: graceful` keeps a deploy from killing parses in flight. The defaults are
+**provisional**: they must be recalibrated against the memory of the target container.
 
 `RateLimitFilter` runs last, **per consumer and per plan**: the bucket is keyed on `X-RapidAPI-User`
 (or the key id on the internal path) and its capacity comes from `parserag.rate-limit.*`. It rebuilds
@@ -392,7 +412,7 @@ hand-written file — regenerate it whenever an endpoint, a response model or an
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
-curl -sS -H "X-API-Key: test-key-dev-123" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
+curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
 ```
 
 springdoc is **off by default** (`springdoc.api-docs.enabled: false`); the `docs` profile

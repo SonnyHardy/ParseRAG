@@ -1,10 +1,10 @@
 # Profil `docs` (issue #16) — active springdoc le temps de regenerer docs/openapi.json.
 #
 #   ./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
-#   curl -H "X-API-Key: test-key-dev-123" http://localhost:8080/v3/api-docs > docs/openapi.json
+#   curl -H "X-API-Key: <votre cle admin>" http://localhost:8080/v3/api-docs > docs/openapi.json
 #
-# La cle reste obligatoire : ApiKeyFilter n'exempte aucun chemin (issue #37), et on ne lui ajoute
-# pas d'exception pour de la documentation. Swagger UI (/swagger-ui.html) est activee ici aussi,
+# La cle admin reste obligatoire : ApiKeyFilter n'exempte aucun chemin (issue #37), et depuis
+# l'issue #56 le chemin direct est reserve a l'administration des que RapidAPI est actif. Swagger UI (/swagger-ui.html) est activee ici aussi,
 # utile pour relire la spec dans un navigateur — mais l'appel XHR qu'elle emet vers /v3/api-docs
 # ne porte pas d'en-tete X-API-Key : c'est un profil de generation, pas un portail public.
 springdoc:

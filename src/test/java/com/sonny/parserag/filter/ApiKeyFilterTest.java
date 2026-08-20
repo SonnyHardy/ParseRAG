@@ -1,5 +1,6 @@
 package com.sonny.parserag.filter;
 
+import com.sonny.parserag.config.AppProperties;
 import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.observability.ParseRagMetrics;
@@ -48,8 +49,20 @@ class ApiKeyFilterTest {
 
     private final ApiKeyRepository repository = mock(ApiKeyRepository.class);
     private final MeterRegistry meters = new SimpleMeterRegistry();
-    private final ApiKeyFilter filter =
-            new ApiKeyFilter(repository, JsonMapper.builder().build(), TestMetrics.metrics(meters));
+    private final ApiKeyFilter filter = filterWith(new AppProperties());
+
+    /** Intégration RapidAPI inactive par défaut : c'est le régime du développement local. */
+    private ApiKeyFilter filterWith(AppProperties props) {
+        return new ApiKeyFilter(repository, JsonMapper.builder().build(),
+                TestMetrics.metrics(meters), props);
+    }
+
+    /** Régime de production : un secret proxy est configuré, donc la place de marché est en service. */
+    private ApiKeyFilter filterWithMarketplaceActive() {
+        AppProperties props = new AppProperties();
+        props.getRapidapi().setProxySecret("secret-du-proxy");
+        return filterWith(props);
+    }
 
     private static ApiKey adminKey() {
         ApiKey key = new ApiKey();
@@ -79,6 +92,64 @@ class ApiKeyFilterTest {
 
     private Outcome call(String uri, String rawKey) throws Exception {
         return call(uri, rawKey, new MockHttpServletRequest("GET", uri));
+    }
+
+    /** Même appel, mais avec un filtre configuré autrement (place de marché active). */
+    private Outcome callWith(ApiKeyFilter other, String uri, String rawKey) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", uri);
+        request.setRequestURI(uri);
+        request.addHeader("X-API-Key", rawKey);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        other.doFilter(request, response, chain);
+        return new Outcome(response, chain);
+    }
+
+    private static ApiKey nonAdminKey() {
+        ApiKey key = new ApiKey();
+        key.setKeyHash(RAW_KEY_HASH);
+        key.setPlan(Plan.STARTER);
+        key.setAdmin(false);
+        return key;
+    }
+
+    // ── Le chemin direct se referme quand la place de marché est active (issue #56) ──────────
+
+    @Test
+    void marketplaceActive_nonAdminDirectCallIsRefused() throws Exception {
+        // Le contournement que l'issue #56 ferme : une clé interne valide servait l'origine en
+        // direct, sans quota ni facturation.
+        when(repository.findByKeyHashAndActiveTrue(RAW_KEY_HASH)).thenReturn(Optional.of(nonAdminKey()));
+
+        Outcome outcome = callWith(filterWithMarketplaceActive(), "/api/v1/parse", RAW_KEY);
+
+        assertEquals(HttpServletResponse.SC_FORBIDDEN, outcome.response().getStatus());
+        assertTrue(outcome.response().getContentAsString().contains("MARKETPLACE_REQUIRED"));
+        assertFalse(outcome.chainWasInvoked());
+        assertEquals(1, authFailures("marketplace_required"));
+    }
+
+    @Test
+    void marketplaceActive_adminKeyStillPasses() throws Exception {
+        // L'administration ne doit pas dépendre de la disponibilité de RapidAPI.
+        when(repository.findByKeyHashAndActiveTrue(RAW_KEY_HASH)).thenReturn(Optional.of(adminKey()));
+
+        Outcome outcome = callWith(filterWithMarketplaceActive(), "/api/v1/health", RAW_KEY);
+
+        assertTrue(outcome.chainWasInvoked());
+        assertEquals(HttpServletResponse.SC_OK, outcome.response().getStatus());
+    }
+
+    @Test
+    void marketplaceInactive_nonAdminKeyStillPasses() throws Exception {
+        // Développement local : sans secret proxy configuré, rien ne change.
+        when(repository.findByKeyHashAndActiveTrue(RAW_KEY_HASH)).thenReturn(Optional.of(nonAdminKey()));
+
+        Outcome outcome = call("/api/v1/parse", RAW_KEY, new MockHttpServletRequest("POST", "/api/v1/parse"));
+
+        assertTrue(outcome.chainWasInvoked());
+        assertEquals(Plan.STARTER, outcome.chain().getRequest().getAttribute(RequestAttributes.PLAN));
     }
 
     // ── /health n'est plus public (issue #37) ────────────────────────────────

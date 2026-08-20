@@ -58,6 +58,8 @@ public class ParseRagMetrics {
     public static final String AUTH_FAILURES      = "parserag.auth.failures";
     public static final String RATELIMIT_REJECTED = "parserag.ratelimit.rejected";
     public static final String RATELIMIT_BUCKETS  = "parserag.ratelimit.buckets_active";
+    public static final String PARSE_SLOTS_FREE  = "parserag.parse.slots_free";
+    public static final String PARSE_REJECTED_BUSY = "parserag.parse.rejected_busy";
     public static final String VISION_CALLS       = "parserag.vision.calls";
     public static final String VISION_DURATION    = "parserag.vision.duration";
     public static final String VISION_TOKENS      = "parserag.vision.tokens";
@@ -85,6 +87,12 @@ public class ParseRagMetrics {
     /** Les trois branches d'échec de {@code ApiKeyFilter}. */
     public enum AuthFailure {
         MISSING_KEY, INVALID_KEY, DB_UNAVAILABLE,
+        /**
+         * Clé interne valide mais non-admin, présentée en direct alors que l'intégration RapidAPI
+         * est active : quelqu'un tente de servir l'origine sans passer par la place de marché
+         * (issue #56).
+         */
+        MARKETPLACE_REQUIRED,
         /**
          * Secret proxy absent des réglages ou faux : quelqu'un appelle l'origine sans passer par
          * la place de marché. Ce n'est pas une métrique technique mais un signal de contournement
@@ -212,6 +220,19 @@ public class ParseRagMetrics {
      */
     public void rateLimitRejected(Plan plan) {
         registry.counter(RATELIMIT_REJECTED, "plan", planTag(plan)).increment();
+    }
+
+    /**
+     * Places de parsing encore libres (issue #56). C'est l'indicateur de saturation : une valeur
+     * qui reste à zéro annonce les refus avant que le client ne les subisse.
+     */
+    public void registerParseSlotsGauge(Supplier<Number> free) {
+        Gauge.builder(PARSE_SLOTS_FREE, free).register(registry);
+    }
+
+    /** Parse refusé faute de place — distinct d'un rejet de débit : ici l'origine est pleine. */
+    public void parseRejectedBusy() {
+        registry.counter(PARSE_REJECTED_BUSY).increment();
     }
 
     /** Nombre de buckets de rate limiting vivants — empreinte mémoire suivie par #35. */
