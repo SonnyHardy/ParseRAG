@@ -193,6 +193,15 @@ parserag:
   parse:
     max-concurrent: 4
     max-wait-seconds: 5
+    # Budget temps des appels vision (issue #57). Arithmetique du pire cas, a garder coherente :
+    #   proxy RapidAPI          180 s (couperet, 504 sans corps au-dela)
+    #   - marge reseau/proxy     20 s
+    #   = plafond ParseRAG      160 s
+    #   - dernier appel vision    50 s  (gemini.max-retries + 1) x timeout-ms + backoff
+    #   = delai vision          110 s
+    # Toucher gemini.timeout-ms ou gemini.max-retries sans refaire ce calcul remet le pire cas
+    # au-dessus du couperet.
+    vision-deadline-seconds: 110
 
   health:
     db-ping-timeout-seconds: 3   # borne chaque sonde base (ping + lecture flyway_schema_history) : sans elle, une base down ferait attendre le connection-timeout Hikari (10 s)
@@ -203,8 +212,12 @@ parserag:
     api-key: ${GOOGLE_API_KEY:}    # vide par défaut en dev (GEMINI_API_KEY est le nom legacy du SDK, non utilisé)
     model: gemini-3.5-flash-lite   # tag stable — ni -preview-*, ni alias mouvant (-latest) ; ne pas retenter 2.5-flash-lite : generateContent rend 404 « no longer available to new users » (mesuré le 20/08/2026, issue #48)
     thinking-level: minimal        # minimal|low|medium|high — transcription structurée, pas de calcul (remplace le thinking-budget de l'ère 2.5)
-    max-retries: 4                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
-    timeout-ms: 60000              # budget par appel (millisecondes : unité de HttpOptions)
+    # Mesure : un appel vision prend ~1,4 s en regime nominal (20 appels en 28,8 s sur un scan de
+    # 25 pages). Les 60 s et 4 tentatives d'origine laissaient donc un pire cas de 5 minutes par
+    # appel, et plus d'une heure par document une fois multiplie par le cap de pages - c'est ce qui
+    # a produit un parse mesure a 702 s. Reduits pour tenir sous le couperet du proxy (issue #57).
+    max-retries: 2                 # tentatives sur 429 (rate-limit) / 5xx, backoff exponentiel (SDK)
+    timeout-ms: 15000              # budget par appel (millisecondes : unite de HttpOptions), ~10x la mesure nominale
 
   extraction:
     strip-line-numbers: true   # retire les n° de ligne de marge (copies de relecture)

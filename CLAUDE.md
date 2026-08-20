@@ -222,8 +222,20 @@ each run, while the `VisionBudget` cap (20/doc) never even engaged. See
 Shared, provider-independent pieces: `VisionResponseParser` (JSON → domain: tolerates Markdown fences,
 rectangularizes ragged rows **by padding only** — never truncates — and rejects grids under 2 columns)
 and `VisionPrompts` (the prompts themselves, so tuning one doesn't silently apply to a single provider
-and skew the comparison). `VisionBudget` caps vision pages per *document* and is shared by both
-consumers — it is orthogonal to the provider.
+and skew the comparison). `VisionBudget` caps vision work per *document* — in **calls** and in **time** — and is shared by both
+consumers, orthogonal to the provider.
+
+The time budget (issue #57) exists because cost does not track page count: 244 pages of native text
+parse in 7 s, while a 16-page table-heavy paper was measured at **702 s** during a provider stall —
+the same document takes 9–13 s normally. `timeout-ms` x `max-retries` x `max-pages-per-document`
+allowed over an hour on a single document, well past RapidAPI's 180 s cut-off, which would return a
+bodyless 504. Past the deadline no *new* vision call starts and the remaining pages degrade to
+`manual_review_needed` — the graceful-degradation contract was already there, the deadline just gives
+it a second trigger. An in-flight call is not interrupted, so the true worst case is
+`deadline + (max-retries + 1) x timeout + backoff`; that sum, not the deadline alone, is what must
+stay under the proxy ceiling, and `application.yaml` carries the arithmetic. Verified end to end: with
+the deadline forced to 1 s, a 25-page scan returns **HTTP 200 in 3 s** with 24 pages flagged, instead
+of 28 s of work.
 
 **Adding a provider**: implement `VisionFallback`, reuse `VisionResponseParser` and `VisionPrompts`,
 annotate with `@ConditionalOnProperty(... havingValue = "<name>")`. Do not mock the vendor SDK client

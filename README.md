@@ -145,6 +145,11 @@ Your remaining balance is on your RapidAPI dashboard, and every response carries
 Parsing is synchronous: the response comes back when the document is done. Budget generous client
 timeouts — a large scanned document goes through a vision model page by page.
 
+**The call always returns a result.** The vision fallback works under a time budget: if it cannot
+finish a document in time — typically when the vision provider slows down — the remaining pages come
+back flagged `manual_review_needed` instead of the request hanging until something times out. A
+partial answer you can act on beats a gateway error you cannot.
+
 ---
 
 ## Response Reference
