@@ -71,8 +71,8 @@ public class OpenApiConfig {
                         chunk carries a confidence score and a `manual_review_needed` flag, so a \
                         low-quality page never enters your index unnoticed.
 
-                        Authentication is by API key: send it in the `X-API-Key` header on every \
-                        request. Rate limits and monthly quotas depend on your plan.""")
+                        Authentication is by API key. Through the RapidAPI marketplace, send it in the \
+                        `X-RapidAPI-Key` header and the proxy applies your plan's quota; a self-hosted instance expects `X-API-Key`. The page cap per document is enforced by ParseRAG itself.""")
                 .contact(new Contact().name("ParseRAG").url("https://github.com/SonnyHardy/ParseRAG"))
                 .license(new License().name("Proprietary"));
     }
@@ -98,7 +98,7 @@ public class OpenApiConfig {
                 .type(SecurityScheme.Type.APIKEY)
                 .in(SecurityScheme.In.HEADER)
                 .name(API_KEY_HEADER)
-                .description("API key issued with your plan. Sent on every request, including "
-                        + "GET /api/v1/usage.");
+                .description("API key issued with your plan. Consumers of the RapidAPI listing send "
+                        + "X-RapidAPI-Key instead: the marketplace proxy authenticates them.");
     }
 }

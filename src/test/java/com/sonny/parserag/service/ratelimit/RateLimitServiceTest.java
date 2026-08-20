@@ -1,18 +1,24 @@
 package com.sonny.parserag.service.ratelimit;
 
 import com.sonny.parserag.config.AppProperties;
-import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.observability.TestMetrics;
 import org.junit.jupiter.api.Test;
-
-import java.util.UUID;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Vérifie le token bucket par API key de {@link RateLimitService} (issue #14). */
+/**
+ * Garde de débit par consommateur et par plan (issues #14, #54).
+ * <p>
+ * Deux propriétés sont figées ici parce qu'elles se sont révélées coûteuses à retrouver :
+ * l'isolation entre appelants — la raison d'avoir écarté une garde globale — et la reconstruction
+ * du bucket quand le plan change, sans quoi un client qui vient d'upgrader resterait cadencé à
+ * l'ancien débit jusqu'au prochain redémarrage.
+ */
 class RateLimitServiceTest {
 
     private static RateLimitService service() {
@@ -25,32 +31,31 @@ class RateLimitServiceTest {
         return new RateLimitService(props, TestMetrics.metrics());
     }
 
-    private static ApiKey key(Plan plan) {
-        ApiKey k = new ApiKey();
-        k.setId(UUID.randomUUID());
-        k.setPlan(plan);
-        return k;
-    }
-
-    /** Critère de validation de l'issue : plan Free → 10 requêtes OK, la 11ème est refusée. */
     @Test
     void freePlanAllowsTenThenBlocksEleventh() {
         RateLimitService service = service();
-        ApiKey apiKey = key(Plan.FREE);
 
         for (int i = 1; i <= 10; i++) {
-            assertTrue(service.tryConsume(apiKey).isConsumed(), "requête " + i + " doit passer");
+            assertTrue(service.tryConsume("rapidapi:alice", Plan.FREE).isConsumed(),
+                    "requête " + i + " doit passer");
         }
-        assertFalse(service.tryConsume(apiKey).isConsumed(), "la 11ème doit être bloquée (429)");
+        assertFalse(service.tryConsume("rapidapi:alice", Plan.FREE).isConsumed(),
+                "la 11ᵉ doit être bloquée (429)");
     }
 
     @Test
-    void remainingTokensDecreaseFromLimit() {
+    void oneConsumerBurningItsBudgetDoesNotAffectTheOthers() {
+        // Le scénario qui a condamné la garde globale : 300 clients dans les clous de leur plan ne
+        // doivent pas payer pour un seul qui s'emballe.
         RateLimitService service = service();
-        ApiKey apiKey = key(Plan.FREE);
 
-        assertEquals(9, service.tryConsume(apiKey).getRemainingTokens());
-        assertEquals(8, service.tryConsume(apiKey).getRemainingTokens());
+        for (int i = 1; i <= 10; i++) {
+            assertTrue(service.tryConsume("rapidapi:alice", Plan.FREE).isConsumed());
+        }
+        assertFalse(service.tryConsume("rapidapi:alice", Plan.FREE).isConsumed(), "alice a épuisé son budget");
+
+        assertTrue(service.tryConsume("rapidapi:bob", Plan.FREE).isConsumed(), "bob n'a rien à voir avec alice");
+        assertTrue(service.tryConsume("key:1c3f", Plan.FREE).isConsumed(), "ni la clé interne");
     }
 
     @Test
@@ -62,63 +67,46 @@ class RateLimitServiceTest {
         assertEquals(300, service.limitForPlan(Plan.SCALE));
     }
 
-    /** Starter (30/min) ne doit pas être bloqué après 11 requêtes, contrairement à Free. */
-    @Test
-    void higherPlanToleratesMoreRequests() {
-        RateLimitService service = service();
-        ApiKey apiKey = key(Plan.STARTER);
-
-        for (int i = 1; i <= 11; i++) {
-            assertTrue(service.tryConsume(apiKey).isConsumed(), "Starter requête " + i + " doit passer");
-        }
+    @ParameterizedTest
+    @EnumSource(Plan.class)
+    void everyPlanHasAConfiguredRate(Plan plan) {
+        // Le switch est exhaustif : aucun plan ne doit lever ni retourner 0, ce qui bloquerait
+        // toutes les requêtes de son palier.
+        assertTrue(service().limitForPlan(plan) > 0);
     }
 
-    /** Upgrade FREE→STARTER à chaud : la nouvelle limite (30) s'applique sans redémarrage. */
     @Test
-    void planUpgradeRebuildsBucketWithNewLimit() {
+    void upgradingThePlanRebuildsTheBucketWithTheNewCapacity() {
         RateLimitService service = service();
-        ApiKey apiKey = key(Plan.FREE);
-
-        // Épuise le quota FREE (10) : la 11ème serait bloquée.
-        for (int i = 0; i < 10; i++) {
-            service.tryConsume(apiKey);
-        }
-        assertFalse(service.tryConsume(apiKey).isConsumed(), "FREE épuisé");
-
-        // Upgrade → le bucket est reconstruit à la capacité STARTER.
-        apiKey.setPlan(Plan.STARTER);
-        for (int i = 1; i <= 30; i++) {
-            assertTrue(service.tryConsume(apiKey).isConsumed(), "STARTER requête " + i + " doit passer");
-        }
-        assertFalse(service.tryConsume(apiKey).isConsumed(), "STARTER épuisé à la 31ème");
-    }
-
-    /** Downgrade STARTER→FREE à chaud : la limite retombe à 10. */
-    @Test
-    void planDowngradeRebuildsBucketWithLowerLimit() {
-        RateLimitService service = service();
-        ApiKey apiKey = key(Plan.STARTER);
-
-        service.tryConsume(apiKey);
-        apiKey.setPlan(Plan.FREE);
 
         for (int i = 1; i <= 10; i++) {
-            assertTrue(service.tryConsume(apiKey).isConsumed(), "FREE requête " + i + " doit passer");
+            service.tryConsume("rapidapi:alice", Plan.FREE);
         }
-        assertFalse(service.tryConsume(apiKey).isConsumed(), "FREE épuisé à la 11ème");
+        assertFalse(service.tryConsume("rapidapi:alice", Plan.FREE).isConsumed());
+
+        // Même consommateur, plan supérieur : le bucket est reconstruit à la capacité du nouveau
+        // palier plutôt que de rester bloqué sur l'ancien jusqu'au redémarrage.
+        assertTrue(service.tryConsume("rapidapi:alice", Plan.PRO).isConsumed());
+        assertEquals(98, service.tryConsume("rapidapi:alice", Plan.PRO).getRemainingTokens());
     }
 
-    /** Chaque clé a son propre bucket : consommer l'une n'affecte pas l'autre. */
     @Test
-    void bucketsAreIsolatedPerKey() {
+    void remainingTokensDecreaseFromThePlanLimit() {
         RateLimitService service = service();
-        ApiKey a = key(Plan.FREE);
-        ApiKey b = key(Plan.FREE);
 
-        for (int i = 0; i < 10; i++) {
-            service.tryConsume(a);
+        assertEquals(9, service.tryConsume("rapidapi:alice", Plan.FREE).getRemainingTokens());
+        assertEquals(8, service.tryConsume("rapidapi:alice", Plan.FREE).getRemainingTokens());
+    }
+
+    @Test
+    void refillIsNotImmediate() {
+        // Un bucket qui se réalimenterait instantanément ne protégerait rien.
+        RateLimitService service = service();
+        for (int i = 1; i <= 10; i++) {
+            service.tryConsume("rapidapi:alice", Plan.FREE);
         }
-        assertFalse(service.tryConsume(a).isConsumed(), "clé A épuisée");
-        assertTrue(service.tryConsume(b).isConsumed(), "clé B intacte");
+
+        assertTrue(service.tryConsume("rapidapi:alice", Plan.FREE).getNanosToWaitForRefill() > 0,
+                "le client doit pouvoir déduire un Retry-After exploitable");
     }
 }

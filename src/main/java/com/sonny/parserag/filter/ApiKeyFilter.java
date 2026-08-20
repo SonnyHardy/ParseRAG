@@ -26,13 +26,20 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Authentification par clé interne.
+ * <p>
+ * Depuis le passage par la place de marché (issue #54), ce n'est plus le chemin principal mais le
+ * chemin <em>interne</em> : administration ({@code GET /api/v1/health}), développement local, et
+ * transition tant que le listing RapidAPI n'est pas publié. Le trafic public est authentifié en
+ * amont par {@link RapidApiProxyFilter}, qui pose alors le plan lui-même.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ApiKeyFilter extends OncePerRequestFilter {
 
     private static final String HEADER_NAME = "X-API-Key";
-    private static final String REQUEST_ATTRIBUTE = "apiKey";
 
     private final ApiKeyRepository apiKeyRepository;
     private final ObjectMapper objectMapper;
@@ -42,6 +49,13 @@ public class ApiKeyFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
+        // Déjà authentifiée par le proxy RapidAPI : pas de clé interne à réclamer, et surtout
+        // pas de lecture en base sur le chemin chaud.
+        if (request.getAttribute(RequestAttributes.PLAN) != null) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String rawKey = request.getHeader(HEADER_NAME);
 
         if (rawKey == null || rawKey.isBlank()) {
@@ -80,7 +94,8 @@ public class ApiKeyFilter extends OncePerRequestFilter {
             return;
         }
 
-        request.setAttribute(REQUEST_ATTRIBUTE, apiKey.get());
+        request.setAttribute(RequestAttributes.API_KEY, apiKey.get());
+        request.setAttribute(RequestAttributes.PLAN, apiKey.get().getPlan());
         filterChain.doFilter(request, response);
     }
 

@@ -13,19 +13,24 @@ your index unnoticed.
 
 ### 1. Get an API key
 
-ParseRAG is served through RapidAPI — see [Pricing](#pricing). Prefer to run it yourself? Jump to
-[Run it yourself](#run-it-yourself); the dev key is seeded for you.
+ParseRAG is served through RapidAPI — subscribe to a plan and copy your key. See
+[Pricing](#pricing). Prefer to run it yourself? Jump to [Run it yourself](#run-it-yourself); a dev
+key is seeded for you.
 
 ### 2. Send a PDF
 
 ```bash
-export BASE_URL="http://localhost:8080"   # your deployment, or a local run
-export API_KEY="your-api-key"
+export BASE_URL="https://parserag.p.rapidapi.com"
+export API_KEY="your-rapidapi-key"
 
 curl -X POST "$BASE_URL/api/v1/parse" \
-  -H "X-API-Key: $API_KEY" \
+  -H "X-RapidAPI-Key: $API_KEY" \
+  -H "X-RapidAPI-Host: parserag.p.rapidapi.com" \
   -F "file=@document.pdf"
 ```
+
+RapidAPI authenticates the call, applies your plan's quota and forwards it to ParseRAG. Running the
+API yourself instead? Use `-H "X-API-Key: …"` against your own host — everything else is identical.
 
 ### 3. Read the chunks
 
@@ -65,7 +70,7 @@ Full, runnable versions live in [`docs/examples/`](docs/examples). Below is the 
 
 ```bash
 curl -X POST "$BASE_URL/api/v1/parse" \
-  -H "X-API-Key: $API_KEY" \
+  -H "X-RapidAPI-Key: $API_KEY" \
   -F "file=@document.pdf" \
   | python3 -m json.tool
 ```
@@ -78,7 +83,7 @@ import requests
 with open("document.pdf", "rb") as f:
     response = requests.post(
         f"{BASE_URL}/api/v1/parse",
-        headers={"X-API-Key": API_KEY},
+        headers={"X-RapidAPI-Key": API_KEY},
         files={"file": ("document.pdf", f, "application/pdf")},
         timeout=300,
     )
@@ -103,7 +108,7 @@ RequestBody body = new MultipartBody.Builder()
 
 Request request = new Request.Builder()
         .url(baseUrl + "/api/v1/parse")
-        .addHeader("X-API-Key", apiKey)
+        .addHeader("X-RapidAPI-Key", apiKey)
         .post(body)
         .build();
 
@@ -118,12 +123,14 @@ try (Response response = client.newCall(request).execute()) {
 
 | Method | Path             | Description                                          |
 |--------|------------------|------------------------------------------------------|
-| `POST` | `/api/v1/parse`  | Parse a PDF into chunks. Consumes one document from your quota on success. |
-| `GET`  | `/api/v1/usage`  | Current cycle consumption. Never blocked by the quota — you can always read it. |
+| `POST` | `/api/v1/parse`  | Parse a PDF into chunks. Counts as one request against your plan. |
 
-Every request needs the `X-API-Key` header, `/api/v1/usage` included. The machine-readable contract
-is [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1) — import it into Postman, Insomnia or your
-own client generator.
+Every request must carry your key. The machine-readable contract is
+[`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1) — import it into Postman, Insomnia or your own
+client generator.
+
+Your remaining balance is on your RapidAPI dashboard, and every response carries
+`x-ratelimit-requests-remaining` / `-reset` from the marketplace proxy.
 
 ### `POST /api/v1/parse`
 
@@ -137,23 +144,6 @@ own client generator.
 
 Parsing is synchronous: the response comes back when the document is done. Budget generous client
 timeouts — a large scanned document goes through a vision model page by page.
-
-### `GET /api/v1/usage`
-
-No parameters. Returns the current billing cycle, which is **anniversary-based**: it is anchored on
-the day your key was created, so `reset_date` is the next occurrence of that day, not the first of
-the month.
-
-```json
-{
-  "plan": "free",
-  "docs_used": 37,
-  "docs_limit": 100,
-  "docs_remaining": 63,
-  "reset_date": "2026-09-14",
-  "period": "2026-08"
-}
-```
 
 ---
 
@@ -228,7 +218,7 @@ Branch on `error`, which is stable. `message` is for humans and may change betwe
 
 | Code                   | HTTP | When                                                              |
 |------------------------|------|-------------------------------------------------------------------|
-| `MISSING_API_KEY`      | 401  | No `X-API-Key` header.                                            |
+| `MISSING_API_KEY`      | 401  | No key on the request (self-hosted: no `X-API-Key` header).        |
 | `INVALID_API_KEY`      | 403  | Unknown or deactivated key.                                       |
 | `MISSING_FILE`         | 400  | No `file` part, or an empty one.                                  |
 | `INVALID_FILE_FORMAT`  | 415  | Content type is neither `application/pdf` nor `application/octet-stream`. |
@@ -237,39 +227,36 @@ Branch on `error`, which is stable. `message` is for humans and may change betwe
 | `FILE_TOO_LARGE`       | 413  | Over the 50 MB limit.                                             |
 | `PDF_UNREADABLE`       | 400  | Corrupted, or encrypted with a password.                          |
 | `DOCUMENT_TOO_LONG`    | 422  | More pages than your plan allows.                                 |
-| `RATE_LIMIT_EXCEEDED`  | 429  | Too many requests per minute. Wait `Retry-After` seconds.         |
-| `QUOTA_EXCEEDED`       | 429  | Monthly document quota reached. `message` carries the reset date. |
+| `RATE_LIMIT_EXCEEDED`  | 429  | You are sending too fast. Wait `Retry-After` seconds.             |
+| `INVALID_PROXY_SECRET` | 403  | The call did not come through the RapidAPI marketplace.            |
 | `NOT_FOUND`            | 404  | No such endpoint.                                                 |
 | `INTERNAL_ERROR`       | 500  | Unexpected server-side failure. Safe to retry.                    |
 | `DATABASE_UNAVAILABLE` | 503  | The service could not verify your key. Retry shortly.             |
 
-Both 429s share a status code but not a remedy: `RATE_LIMIT_EXCEEDED` clears within the minute,
-`QUOTA_EXCEEDED` needs the cycle to reset or a plan upgrade.
+Quota rejections do not appear in this table: they are returned by the RapidAPI proxy before the
+request ever reaches ParseRAG, in the marketplace's own format.
 
 ---
 
 ## Rate Limits & Quotas
 
-| Plan      | Requests / min | Documents / month | Pages / document |
-|-----------|----------------|-------------------|------------------|
-| `FREE`    | 10             | 100               | 100              |
-| `STARTER` | 30             | 1 000             | 300              |
-| `PRO`     | 100            | 5 000             | 500              |
-| `SCALE`   | 300            | 20 000            | 1 000            |
+**Requests per minute and documents per month are set by your RapidAPI plan** and enforced by the
+marketplace proxy — see the listing for the current tiers. Every response carries
+`x-ratelimit-requests-remaining` and `x-ratelimit-requests-reset`.
 
-The 50 MB file cap applies on every plan.
+ParseRAG enforces two limits of its own, per plan — the first because the marketplace counts
+requests and cannot see how big a job is, the second as a second barrier behind the proxy:
 
-**Every response** carries the rate-limit state, so you can pace yourself without waiting for a 429:
+| Plan      | Pages per document | Requests per minute |
+|-----------|--------------------|---------------------|
+| `FREE`    | 100                | 10                  |
+| `STARTER` | 300                | 30                  |
+| `PRO`     | 500                | 100                 |
+| `SCALE`   | 1 000              | 300                 |
 
-| Header                  | Meaning                                                   |
-|-------------------------|-----------------------------------------------------------|
-| `X-RateLimit-Limit`     | Requests per minute allowed on your plan.                 |
-| `X-RateLimit-Remaining` | Requests left in the current window.                      |
-| `X-RateLimit-Reset`     | Unix timestamp (seconds) at which the bucket refills.     |
-| `Retry-After`           | **On a 429 only** — seconds to wait before retrying.      |
-
-Quota consumption counts **successful parses only**: a rejected upload does not cost a document.
-Read your remaining balance at any time with `GET /api/v1/usage`.
+Over the page cap, the call is rejected with `DOCUMENT_TOO_LONG` (422); the 50 MB file cap applies on
+every plan. Over the rate, `RATE_LIMIT_EXCEEDED` (429) with a `Retry-After` — the budget is yours
+alone, so another customer's traffic never costs you a rejection.
 
 ---
 
@@ -303,6 +290,7 @@ POSTGRES_PASSWORD=your-password
 # Optional
 SERVER_PORT=8080
 GOOGLE_API_KEY=          # vision fallback for scanned pages; without it those pages are flagged for manual review
+RAPIDAPI_PROXY_SECRET=   # marketplace integration; empty locally, where the internal key authenticates
 ```
 
 Then:

@@ -1,7 +1,6 @@
 package com.sonny.parserag.service.ratelimit;
 
 import com.sonny.parserag.config.AppProperties;
-import com.sonny.parserag.entity.ApiKey;
 import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.observability.ParseRagMetrics;
 import io.github.bucket4j.Bandwidth;
@@ -12,25 +11,38 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Rate limiting par API key via token bucket Bucket4j (issue #14).
+ * Garde de débit <strong>par consommateur et par plan</strong> (issues #14, #54).
  * <p>
- * Un {@link Bucket} en mémoire par clé, indexé par {@code apiKey.id} dans une
- * {@link ConcurrentHashMap}. La capacité du bucket = débit/minute du plan
- * ({@link AppProperties.RateLimit#forPlan}), avec un refill « greedy » qui réalimente
- * les jetons continûment sur une fenêtre d'une minute.
- * <p>
- * <strong>MVP mono-instance :</strong> le stockage est in-process. Pour un déploiement
- * multi-instances, migrer vers {@code bucket4j-redis} (backend distribué natif de Bucket4j).
- * <p>
- * <strong>Changement de plan à chaud :</strong> le bucket mémorise le plan avec lequel il a été
- * construit ; si le plan de la clé change (upgrade/downgrade), il est reconstruit à la volée avec
- * la nouvelle capacité — pas besoin de redémarrer. La reconstruction se fait de façon atomique via
- * {@link ConcurrentHashMap#compute} et ré-amorce les jetons à plein (événement rare, favorable au
- * client sur un upgrade).
+ * Un {@link Bucket} en mémoire par appelant, indexé par son identité — celle annoncée par RapidAPI
+ * ({@code X-RapidAPI-User}) ou, sur le chemin interne, l'identifiant de la clé. Sa capacité est le
+ * débit du plan ({@link AppProperties.RateLimit#forPlan}), réglable dans {@code application.yaml}.
+ *
+ * <p><strong>Par consommateur, jamais globalement.</strong> Une garde globale est collective : à
+ * 600 req/min partagées, 300 clients faisant chacun 10 req/min — tous dans les clous de leur plan —
+ * se prendraient un 429. Le fautif doit être le seul gêné.
+ *
+ * <p><strong>Articulation avec RapidAPI.</strong> La place de marché cadence déjà les consommateurs
+ * selon leur abonnement ; ces paliers-ci sont une seconde barrière, à tenir <em>au moins aussi
+ * hauts</em> que ceux du listing. Réglés plus bas, ce sont eux qui mordraient en premier et le
+ * client se verrait refuser un débit qu'il a pourtant payé.
+ *
+ * <p><strong>Changement de plan à chaud :</strong> le bucket mémorise le plan avec lequel il a été
+ * construit ; si le plan change (upgrade/downgrade côté RapidAPI), il est reconstruit à la volée
+ * avec la nouvelle capacité — pas besoin de redémarrer. La reconstruction passe par
+ * {@link ConcurrentHashMap#compute} et ré-amorce les jetons à plein : événement rare, et favorable
+ * au client sur un upgrade.
+ *
+ * <p><strong>Ce que cette garde ne couvre pas.</strong> Un attaquant en possession du secret proxy
+ * peut faire varier {@code X-RapidAPI-User} et s'offrir un bucket neuf à chaque requête. Le rempart
+ * contre ce scénario est le secret lui-même ({@code RapidApiProxyFilter}), pas ce compteur. Et la
+ * ressource réellement rare sur {@code /parse} est la <em>concurrence</em>, pas le débit.
+ *
+ * <p><strong>MVP mono-instance :</strong> stockage in-process, et la map n'a aucune éviction — elle
+ * grandit avec le nombre de consommateurs vus depuis le démarrage, d'où la gauge (issue #35). Pour
+ * plusieurs réplicas, passer à {@code bucket4j-redis}.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,12 +52,8 @@ public class RateLimitService {
 
     private final AppProperties appProperties;
     private final ParseRagMetrics metrics;
-    private final ConcurrentHashMap<UUID, PlannedBucket> buckets = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PlannedBucket> buckets = new ConcurrentHashMap<>();
 
-    /**
-     * La map n'a aucune éviction : elle grandit avec le nombre de clés vues depuis le démarrage.
-     * Cette gauge est la mesure directe de l'empreinte mémoire que l'issue #35 veut borner.
-     */
     @PostConstruct
     void registerMetrics() {
         metrics.registerBucketsGauge(buckets::size);
@@ -55,30 +63,33 @@ public class RateLimitService {
     private record PlannedBucket(Plan plan, Bucket bucket) {}
 
     /**
-     * Tente de consommer un jeton pour la clé donnée. Reconstruit le bucket si le plan a changé.
+     * Tente de consommer un jeton pour le consommateur donné, au débit de son plan. Reconstruit le
+     * bucket si le plan a changé depuis la dernière requête.
      *
-     * @return la sonde Bucket4j : {@code isConsumed()}, {@code getRemainingTokens()},
-     *         {@code getNanosToWaitForRefill()} pour construire les headers de réponse.
+     * @param consumer identité de l'appelant, telle que résolue par la chaîne de filtres
+     * @param plan     plan applicable à cette requête
+     * @return la sonde Bucket4j : {@code isConsumed()}, {@code getRemainingTokens()} et
+     *         {@code getNanosToWaitForRefill()} pour construire le {@code Retry-After}
      */
-    public ConsumptionProbe tryConsume(ApiKey apiKey) {
-        PlannedBucket pb = buckets.compute(apiKey.getId(), (id, existing) ->
-                (existing == null || existing.plan() != apiKey.getPlan())
-                        ? new PlannedBucket(apiKey.getPlan(), newBucket(apiKey.getPlan()))
+    public ConsumptionProbe tryConsume(String consumer, Plan plan) {
+        PlannedBucket pb = buckets.compute(consumer, (c, existing) ->
+                (existing == null || existing.plan() != plan)
+                        ? new PlannedBucket(plan, newBucket(plan))
                         : existing);
         return pb.bucket().tryConsumeAndReturnRemaining(1);
     }
 
-    /** Capacité (jetons) du bucket pour le plan — sert aussi de {@code X-RateLimit-Limit}. */
+    /** Débit autorisé (requêtes/minute) pour le plan — sert aussi de message au client sur un 429. */
     public int limitForPlan(Plan plan) {
         return appProperties.getRateLimit().forPlan(plan);
     }
 
     private Bucket newBucket(Plan plan) {
-        int capacity = appProperties.getRateLimit().forPlan(plan);
-        Bandwidth limit = Bandwidth.builder()
+        int capacity = limitForPlan(plan);
+        Bandwidth bandwidth = Bandwidth.builder()
                 .capacity(capacity)
                 .refillGreedy(capacity, REFILL_WINDOW)
                 .build();
-        return Bucket.builder().addLimit(limit).build();
+        return Bucket.builder().addLimit(bandwidth).build();
     }
 }

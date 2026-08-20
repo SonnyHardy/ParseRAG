@@ -12,8 +12,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -89,6 +89,7 @@ class ParseRagMetricsTest {
     @Test
     void authFailuresAreTaggedByReason() {
         metrics.authFailure(AuthFailure.MISSING_KEY);
+        metrics.authFailure(AuthFailure.INVALID_PROXY_SECRET);
         metrics.authFailure(AuthFailure.INVALID_KEY);
         metrics.authFailure(AuthFailure.INVALID_KEY);
         metrics.authFailure(AuthFailure.DB_UNAVAILABLE);
@@ -99,18 +100,14 @@ class ParseRagMetricsTest {
     }
 
     @Test
-    void quotaUsageRatioIsRecordedAsAFraction() {
-        metrics.quotaUsageRatio(Plan.STARTER, 250, 1000);
+    void bucketsGaugeReflectsTheLiveValue() {
+        AtomicInteger size = new AtomicInteger(3);
+        metrics.registerBucketsGauge(size::get);
 
-        assertEquals(0.25, registry.get(ParseRagMetrics.QUOTA_USAGE_RATIO)
-                .tag("plan", "starter").summary().totalAmount(), 1e-9);
-    }
-
-    @Test
-    void quotaUsageRatioIgnoresZeroLimit() {
-        // Un plan à limite 0 diviserait par zéro : on n'émet rien plutôt qu'un Infinity.
-        metrics.quotaUsageRatio(Plan.FREE, 5, 0);
-        assertTrue(registry.find(ParseRagMetrics.QUOTA_USAGE_RATIO).summaries().isEmpty());
+        assertEquals(3, registry.get(ParseRagMetrics.RATELIMIT_BUCKETS).gauge().value());
+        size.set(7);
+        assertEquals(7, registry.get(ParseRagMetrics.RATELIMIT_BUCKETS).gauge().value(),
+                "la gauge doit suivre la source, pas figer sa valeur d'inscription");
     }
 
     @Test
@@ -143,22 +140,6 @@ class ParseRagMetricsTest {
     }
 
     @Test
-    void bucketsGaugeReflectsTheLiveValue() {
-        AtomicInteger size = new AtomicInteger(3);
-        metrics.registerBucketsGauge(size::get);
-
-        assertEquals(3, registry.get(ParseRagMetrics.RATELIMIT_BUCKETS).gauge().value());
-        size.set(7);
-        assertEquals(7, registry.get(ParseRagMetrics.RATELIMIT_BUCKETS).gauge().value(),
-                "la gauge doit suivre la source, pas figer sa valeur d'inscription");
-    }
-
-    /**
-     * Le budget de cardinalité de l'issue tient à une propriété : aucun tag ne doit pouvoir porter
-     * une valeur non bornée (clé API, identifiant, nom de fichier, email). Ici on vérifie qu'aucune
-     * métrique métier n'expose de tag hors de la liste blanche.
-     */
-    @Test
     void noMetricCarriesAnUnboundedTag() {
         List<String> allowed = List.of("plan", "stage", "outcome", "error_code", "detector",
                 "provider", "model", "type", "reason", "borderless",
@@ -175,8 +156,6 @@ class ParseRagMetricsTest {
         metrics.scannedPagesDetected(2);
         metrics.authFailure(AuthFailure.MISSING_KEY);
         metrics.rateLimitRejected(Plan.FREE);
-        metrics.quotaRejected(Plan.FREE);
-        metrics.quotaUsageRatio(Plan.FREE, 1, 10);
         metrics.visionCall("gemini", "m", Outcome.SUCCESS, Duration.ofMillis(1));
         metrics.visionTokens("gemini", "m", TokenType.PROMPT, 5);
         metrics.visionBudgetExhausted();

@@ -10,6 +10,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Panneau de contrôle central de ParseRAG.
  * Toutes les propriétés préfixées par "parserag" dans application.yaml.
@@ -27,8 +30,8 @@ public class AppProperties {
     private final Extraction           extraction           = new Extraction();
     private final Tables               tables               = new Tables();
     private final Vision               vision               = new Vision();
+    private final RapidApi             rapidapi             = new RapidApi();
     private final RateLimit            rateLimit            = new RateLimit();
-    private final Quota                quota                = new Quota();
     private final Chunking             chunking             = new Chunking();
     private final Confidence           confidence           = new Confidence();
     private final PageLimits           pageLimits           = new PageLimits();
@@ -163,6 +166,61 @@ public class AppProperties {
         private int     maxPagesPerDocument;
     }
 
+    /**
+     * Intégration à la place de marché RapidAPI (issue #54), qui authentifie le consommateur,
+     * applique le quota de son plan et facture. Notre backend ne fait plus que deux choses :
+     * vérifier que la requête vient bien du proxy, et lire le plan qu'il annonce.
+     */
+    @Data
+    public static class RapidApi {
+        /**
+         * Secret propre à notre API, ajouté par le proxy sur chaque requête
+         * ({@code X-RapidAPI-Proxy-Secret}). Vide en dev : l'intégration est alors inactive et
+         * seule la clé interne authentifie.
+         */
+        private String proxySecret = "";
+        /**
+         * Secret précédent, accepté en parallèle du courant. Sans ce second slot, toute rotation
+         * de secret est une coupure : le proxy et le backend ne peuvent pas changer au même
+         * instant.
+         */
+        private String previousProxySecret = "";
+        /**
+         * Correspondance {@code X-RapidAPI-Subscription} → {@link Plan}. Les noms de plans sont
+         * définis dans le tableau de bord provider et peuvent changer sans redéploiement : ils
+         * n'ont donc rien à faire en dur dans le code.
+         * <p>Un nom absent de cette table retombe sur {@link Plan#FREE} — on échoue fermé.
+         */
+        private Map<String, Plan> planMapping = new LinkedHashMap<>();
+
+        /** L'intégration n'est active que si un secret est configuré. */
+        public boolean isConfigured() {
+            return proxySecret != null && !proxySecret.isBlank();
+        }
+
+        /**
+         * Plan correspondant au nom annoncé par le proxy, {@link Plan#FREE} par défaut.
+         * <p>La casse est ignorée : {@code BASIC}, {@code Basic} et {@code basic} désignent le
+         * même plan côté RapidAPI, et une différence de casse ne doit pas silencieusement
+         * rétrograder un client payant.
+         */
+        public Plan planFor(String subscription) {
+            if (subscription == null || subscription.isBlank()) return Plan.FREE;
+            return planMapping.entrySet().stream()
+                    .filter(e -> e.getKey().equalsIgnoreCase(subscription.strip()))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(Plan.FREE);
+        }
+    }
+
+    /**
+     * Garde de débit <strong>par consommateur</strong>, au débit de son plan (issues #14, #54).
+     * <p>
+     * RapidAPI cadence déjà ses abonnés ; ces paliers sont une seconde barrière et doivent rester
+     * <em>au moins aussi hauts</em> que ceux du listing, sinon ce sont eux qui mordent en premier
+     * et le client se voit refuser un débit qu'il a payé.
+     */
     @Data
     public static class RateLimit {
         @Positive private int freeRequestsPerMinute;
@@ -177,23 +235,6 @@ public class AppProperties {
                 case STARTER -> starterRequestsPerMinute;
                 case PRO     -> proRequestsPerMinute;
                 case SCALE   -> scaleRequestsPerMinute;
-            };
-        }
-    }
-
-    @Data
-    public static class Quota {
-        @Positive private int freeMonthlyDocs;
-        @Positive private int starterMonthlyDocs;
-        @Positive private int proMonthlyDocs;
-        @Positive private int scaleMonthlyDocs;
-
-        public int forPlan(Plan plan) {
-            return switch (plan) {
-                case FREE    -> freeMonthlyDocs;
-                case STARTER -> starterMonthlyDocs;
-                case PRO     -> proMonthlyDocs;
-                case SCALE   -> scaleMonthlyDocs;
             };
         }
     }

@@ -58,8 +58,6 @@ public class ParseRagMetrics {
     public static final String AUTH_FAILURES      = "parserag.auth.failures";
     public static final String RATELIMIT_REJECTED = "parserag.ratelimit.rejected";
     public static final String RATELIMIT_BUCKETS  = "parserag.ratelimit.buckets_active";
-    public static final String QUOTA_REJECTED     = "parserag.quota.rejected";
-    public static final String QUOTA_USAGE_RATIO  = "parserag.quota.usage_ratio";
     public static final String VISION_CALLS       = "parserag.vision.calls";
     public static final String VISION_DURATION    = "parserag.vision.duration";
     public static final String VISION_TOKENS      = "parserag.vision.tokens";
@@ -86,7 +84,13 @@ public class ParseRagMetrics {
 
     /** Les trois branches d'échec de {@code ApiKeyFilter}. */
     public enum AuthFailure {
-        MISSING_KEY, INVALID_KEY, DB_UNAVAILABLE;
+        MISSING_KEY, INVALID_KEY, DB_UNAVAILABLE,
+        /**
+         * Secret proxy absent des réglages ou faux : quelqu'un appelle l'origine sans passer par
+         * la place de marché. Ce n'est pas une métrique technique mais un signal de contournement
+         * commercial — à surveiller comme tel (issue #54).
+         */
+        INVALID_PROXY_SECRET;
 
         String tag() {
             return name().toLowerCase();
@@ -201,23 +205,13 @@ public class ParseRagMetrics {
         registry.counter(AUTH_FAILURES, "reason", reason.tag()).increment();
     }
 
+    /**
+     * Rejet par la garde de débit, tagué par plan : c'est ce qui distingue un palier trop juste
+     * pour un tier donné d'un client isolé qui s'emballe. Pas de tag d'identité — sa cardinalité
+     * serait non bornée ; la gauge ci-dessous dit combien d'appelants sont suivis.
+     */
     public void rateLimitRejected(Plan plan) {
         registry.counter(RATELIMIT_REJECTED, "plan", planTag(plan)).increment();
-    }
-
-    public void quotaRejected(Plan plan) {
-        registry.counter(QUOTA_REJECTED, "plan", planTag(plan)).increment();
-    }
-
-    /**
-     * Ratio de quota consommé, relevé <em>au passage d'une requête</em> plutôt qu'en gauge : une
-     * gauge imposerait une lecture en base à chaque scrape, et le ratio est propre à une clé — une
-     * gauge « par plan » n'aurait pas de valeur définie quand plusieurs clés partagent le plan.
-     */
-    public void quotaUsageRatio(Plan plan, int used, int limit) {
-        if (limit > 0) {
-            summary(QUOTA_USAGE_RATIO, plan).record((double) used / limit);
-        }
     }
 
     /** Nombre de buckets de rate limiting vivants — empreinte mémoire suivie par #35. */

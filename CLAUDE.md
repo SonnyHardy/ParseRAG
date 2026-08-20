@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ParseRAG is a Spring Boot REST API that turns a PDF into RAG-ready chunks. A single endpoint
 (`POST /api/v1/parse`, multipart) runs an uploaded PDF through an extraction → cleaning → chunking
-pipeline and returns structured chunks as JSON. Authentication is by `X-API-Key` header; usage is
-metered and rate-limited per plan tier.
+pipeline and returns structured chunks as JSON. It is distributed through the **RapidAPI
+marketplace**, which authenticates the consumer, enforces the quota of their plan and bills it
+(issue #54); the internal `X-API-Key` remains for administration and local runs.
 
 Code comments and Javadoc are written in French. Match that convention when editing existing files.
 
@@ -31,6 +32,11 @@ Java 25 toolchain, Spring Boot 4.0.6. Lombok is an annotation processor (configu
 start a DB connection without them): `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
 `POSTGRES_PASSWORD`. Optional: `SERVER_PORT` (default 8080), `GOOGLE_API_KEY` (vision fallback,
 empty in dev), `OPENAI_API_KEY` (only for the legacy vision provider, empty in dev).
+
+`RAPIDAPI_PROXY_SECRET` (and optionally `RAPIDAPI_PROXY_SECRET_PREVIOUS`, for rotation) enables the
+marketplace integration. Empty in dev: the integration is then inactive and only the internal key
+authenticates. **In production it is mandatory** — without it the origin serves anyone who finds its
+URL, marketplace bypassed.
 
 `GOOGLE_API_KEY` is the name the Google Gen AI SDK reads by default; `GEMINI_API_KEY` is its *legacy*
 alias and is not used here. With no key, `VisionFallback.isAvailable()` is false, no SDK client is
@@ -61,36 +67,70 @@ untouched — editing an applied migration breaks Flyway checksum validation).
 4. **Chunk** — `ChunkingService.chunk(doc)` produces `List<Chunk>`.
 5. Return `ParseResponse.ok(...)`.
 
-The `apiKey` request attribute is set by `ApiKeyFilter` and read in the controller; when null the
-pipeline defaults to `Plan.FREE`.
+The `plan` request attribute is set by whichever filter authenticated the call — `RapidApiProxyFilter`
+from the marketplace header, `ApiKeyFilter` from the key's row — and read in the controller. The
+pipeline takes a `Plan`, not an `ApiKey`: it has no business knowing where the call came from.
 
 ### Plan-driven behavior
 
-`Plan` (FREE/STARTER/PRO/SCALE) is the central knob. It selects page limits, rate limits, and
-monthly quotas — all defined in `AppProperties` and sourced from the `parserag.*` block of
-`application.yaml`. When adding a plan-sensitive limit, add it to `AppProperties` with a `forPlan`-style
-switch rather than branching on the enum at call sites.
+`Plan` (FREE/STARTER/PRO/SCALE) is the central knob, now fed by `X-RapidAPI-Subscription` through
+`AppProperties.RapidApi.planFor` (mapping in `application.yaml`, unknown value → `FREE`). It selects
+the **page limits**, defined in `AppProperties` and sourced from the `parserag.*` block. When adding
+a plan-sensitive limit, add it to `AppProperties` with a `forPlan`-style switch rather than branching
+on the enum at call sites.
+
+Requests per minute and documents per month are **no longer ours**: the marketplace enforces and
+bills them. What stays here is what RapidAPI cannot see — it counts requests, not the pages inside a
+PDF, so `PageLimits` is the only guard against a 1 000-page document billed as a single call.
 
 ### Security / filters
 
-`SecurityConfig` is stateless (no sessions, CSRF disabled, `permitAll`) — real auth is the
-`ApiKeyFilter`, inserted into the Spring Security chain via `addFilterBefore`. Note the
-`FilterRegistrationBean` with `setEnabled(false)`: it deliberately disables Spring Boot's automatic
-servlet registration so the filter does not run twice. Any new `OncePerRequestFilter` that should live
-only in the security chain needs the same treatment. `ApiKeyFilter` hashes the incoming key with
-SHA-256 before lookup and filters **every** request — there is no exempt path, `/api/v1/health`
-included (issue #37). Because that lookup is a DB read, the filter catches `DataAccessException`
-**and** `TransactionException` around it and writes a `503 DATABASE_UNAVAILABLE` itself: Spring
-Data's repository is `@Transactional`, so a down Postgres usually surfaces as
-`CannotCreateTransactionException`, which is *not* a `DataAccessException`. Without that catch the
-exception escapes the DispatcherServlet and the client gets Spring Boot's default `/error` 500 —
-including on `/api/v1/health`, whose own `503` is never reached since the controller never runs.
-`RateLimitFilter` (token bucket per key, issue #14) and `QuotaEnforcementFilter` (monthly quota,
-only on `POST /api/v1/parse`, issue #13) run after it and both read the `apiKey` attribute.
+`SecurityConfig` is stateless (no sessions, CSRF disabled, `permitAll`) — real auth is the filter
+chain, inserted via `addFilterBefore`/`addFilterAfter`. Note the `FilterRegistrationBean` with
+`setEnabled(false)` on each: it deliberately disables Spring Boot's automatic servlet registration so
+a filter does not run twice. Any new `OncePerRequestFilter` that should live only in the security
+chain needs the same treatment.
 
-All three filters, plus `GlobalExceptionHandler`, render errors in one shape:
+Two authentication paths, one per request, in this order:
+
+1. **`RapidApiProxyFilter`** (public traffic, issue #54) — verifies `X-RapidAPI-Proxy-Secret` in
+   constant time (`MessageDigest.isEqual`; a naive compare leaks the correct prefix through response
+   time) against the current *or* previous secret, the second slot making rotation possible without
+   an outage. It then maps `X-RapidAPI-Subscription` to a `Plan`.
+   **Secret first, plan second** is an invariant, not a style: the plan header is free text that a
+   direct caller can forge, so it is read only after the secret checks out, and an unknown plan falls
+   back to the most restrictive one. A *wrong* secret is rejected outright rather than falling
+   through to the internal key — a bad secret is not a legitimate caller, and chaining would hand a
+   second chance to whoever is probing. A *missing* secret header falls through, which is the dev,
+   admin and pre-listing path.
+2. **`ApiKeyFilter`** (internal path) — SHA-256 of the key, looked up in Postgres. It short-circuits
+   when the proxy already set `plan`, so the marketplace path costs **no database read at all**.
+   Because that lookup is a DB read, the filter catches `DataAccessException` **and**
+   `TransactionException` around it and writes a `503 DATABASE_UNAVAILABLE` itself: Spring Data's
+   repository is `@Transactional`, so a down Postgres usually surfaces as
+   `CannotCreateTransactionException`, which is *not* a `DataAccessException`. Without that catch the
+   exception escapes the DispatcherServlet and the client gets Spring Boot's default `/error` 500 —
+   including on `/api/v1/health`, whose own `503` is never reached since the controller never runs.
+
+`RateLimitFilter` runs last, **per consumer and per plan**: the bucket is keyed on `X-RapidAPI-User`
+(or the key id on the internal path) and its capacity comes from `parserag.rate-limit.*`. It rebuilds
+the bucket when the plan changes, so an upgrade takes effect without a restart. A *global* bucket was
+tried first and rejected: at 600 req/min shared, 300 clients doing 10 req/min each — all within their
+plan — would collect a 429.
+Keep these tiers **at or above** the listing's own throttle: set lower, ours bites first and the
+customer is refused a rate they paid RapidAPI for.
+Note what this guard does **not** cover: an attacker holding the proxy secret can vary
+`X-RapidAPI-User` and mint a fresh bucket per request. The rampart there is the secret itself. And on
+`/parse` the scarce resource is concurrency, not request rate — bounding it is a separate chantier.
+The filter no longer sets `X-RateLimit-*` on passing responses either — the proxy publishes its own,
+and a second set carrying an infrastructure ceiling would only mislead the client.
+
+Filters, plus `GlobalExceptionHandler`, render errors in one shape:
 `{"error": "<CODE>", "message": "…", "status": <int>}`. A filter runs outside the DispatcherServlet,
 so it writes that JSON itself rather than throwing.
+
+Request attributes are constants in `RequestAttributes` — they are a contract between a filter that
+writes and a controller that reads, and a typo would surface only as a silent `null`.
 
 ### Admin-only endpoints
 
@@ -387,10 +427,13 @@ Two traps met while wiring it, both already fixed but worth knowing:
   algorithm-internal geometry (gutter widths, histogram resolution) lives as `private static final`
   in the relevant service.
 - The codebase is built sprint by sprint. Several features are stubbed or disabled on purpose:
-  `looksLikeTable` always returns `false` (table extraction deferred to issue #9), chunk confidence
-  is hardcoded to `1.0` (issue #8). `TableDetectorService` and `ConfidenceCalculatorService` exist for
-  upcoming sprints — don't assume they're live. The rate-limit and quota filters, by contrast, are no
-  longer stubs (issues #14/#13), and neither is the vision fallback (see below).
+  `looksLikeTable` always returns `false` (table extraction deferred to issue #9). `TableDetectorService`
+  exists for an upcoming sprint — don't assume it's live.
+- **The monthly quota is not ours any more** (issue #54). `QuotaEnforcementFilter`,
+  `UsageTrackingService`, `UsageRecord` and `GET /api/v1/usage` were removed: RapidAPI meters and
+  bills. The `usage_records` table is deliberately still there — dropping it is a second migration,
+  once the listing has run in production, since a Flyway migration cannot be replayed. Issue #53,
+  which specified a home-grown subscription cycle, was closed as delegated.
 - **Tests are plain unit tests** (JUnit 5 + Mockito + `spring-test` mocks), no Spring context —
   collaborators are mocked and web plumbing uses `MockHttpServletRequest`/`MockFilterChain`. Keep new
   tests in that style. The one exception is `ParseRagApplicationTests.contextLoads`: `@SpringBootTest`
