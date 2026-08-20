@@ -9,4 +9,10 @@ import java.util.UUID;
 public interface ApiKeyRepository extends JpaRepository<ApiKey, UUID> {
 
     Optional<ApiKey> findByKeyHashAndActiveTrue(String keyHash);
+
+    /**
+     * Sans le filtre {@code active} : l'amorçage de la clé d'administration (issue #56) doit voir
+     * une clé désactivée pour la remettre en état, là où l'authentification ne doit jamais la voir.
+     */
+    Optional<ApiKey> findByKeyHash(String keyHash);
 }

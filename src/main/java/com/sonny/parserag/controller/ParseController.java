@@ -4,6 +4,7 @@ import com.sonny.parserag.entity.Plan;
 import com.sonny.parserag.exception.GlobalExceptionHandler.ErrorResponse;
 import com.sonny.parserag.filter.RequestAttributes;
 import com.sonny.parserag.model.response.ParseResponse;
+import com.sonny.parserag.service.pipeline.ParseConcurrencyLimiter;
 import com.sonny.parserag.service.pipeline.ParsePipelineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -35,6 +36,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ParseController {
 
     private final ParsePipelineService parsePipelineService;
+    private final ParseConcurrencyLimiter concurrencyLimiter;
 
     /**
      * Parse un fichier PDF et retourne des chunks structurés
@@ -65,8 +67,9 @@ public class ParseController {
             @ApiResponse(responseCode = "401", description = "MISSING_API_KEY — no X-API-Key header.",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "403", description = "INVALID_API_KEY (unknown or inactive key) or INVALID_PROXY_SECRET "
-                            + "(the call did not come through the RapidAPI marketplace).",
+            @ApiResponse(responseCode = "403", description = "INVALID_API_KEY (unknown or inactive key), INVALID_PROXY_SECRET "
+                            + "(the call did not come through the RapidAPI marketplace) or MARKETPLACE_REQUIRED "
+                            + "(a direct key was used while the marketplace serves traffic).",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "413", description = "FILE_TOO_LARGE — over the 50 MB limit.",
@@ -90,7 +93,8 @@ public class ParseController {
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503",
-                    description = "DATABASE_UNAVAILABLE — the key could not be verified.",
+                    description = "SERVICE_BUSY (the server is at capacity, retry shortly) or "
+                            + "DATABASE_UNAVAILABLE (the key could not be verified).",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                             schema = @Schema(implementation = ErrorResponse.class)))
     })
@@ -115,6 +119,10 @@ public class ParseController {
         log.debug("POST /api/v1/parse — '{}' ({} bytes), plan {}",
                 file.getOriginalFilename(), file.getSize(), plan);
 
-        return ResponseEntity.ok(parsePipelineService.process(file, plan));
+        // Borne de concurrence (issue #56) : la memoire est la ressource rare, elle se compte en
+        // parses simultanes. Au-dela, refus franc en 503 plutot qu'une file d'attente invisible.
+        Plan effectivePlan = plan;
+        return ResponseEntity.ok(
+                concurrencyLimiter.withSlot(() -> parsePipelineService.process(file, effectivePlan)));
     }
 }

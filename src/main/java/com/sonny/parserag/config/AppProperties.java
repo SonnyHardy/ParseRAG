@@ -24,6 +24,8 @@ import java.util.Map;
 public class AppProperties {
 
     private final Info                 info                 = new Info();
+    private final Security             security             = new Security();
+    private final Parse                parse                = new Parse();
     private final Health               health               = new Health();
     private final OpenAI               openai               = new OpenAI();
     private final Gemini               gemini               = new Gemini();
@@ -164,6 +166,48 @@ public class AppProperties {
         private double  qualityThreshold;
         @Positive
         private int     maxPagesPerDocument;
+    }
+
+    /**
+     * Identité de l'administrateur et bornes de sécurité (issue #56).
+     */
+    @Data
+    public static class Security {
+        /**
+         * <strong>Hash SHA-256</strong> de la clé d'administration — jamais la clé elle-même.
+         * Vide par défaut : aucune clé n'est alors créée, et {@code GET /api/v1/health} reste
+         * inaccessible. Un défaut de configuration doit priver de diagnostic, pas fabriquer un
+         * identifiant.
+         */
+        private String adminKeyHash = "";
+        /** Propriétaire enregistré pour la clé d'administration ({@code owner_email} est unique). */
+        @NotBlank
+        private String adminKeyEmail = "admin@parserag.local";
+
+        public boolean hasAdminKeyHash() {
+            return adminKeyHash != null && !adminKeyHash.isBlank();
+        }
+    }
+
+    /**
+     * Bornes d'exécution du parsing (issue #56).
+     * <p>
+     * La ressource rare sur {@code /parse} n'est pas le débit mais la <strong>mémoire</strong> :
+     * un upload de 50 Mo est chargé entier, le PDF est rouvert six fois par requête et le rendu
+     * d'une page coûte ~9 Mo. Sans borne, les 200 threads Tomcat par défaut épuisent le tas bien
+     * avant que quoi que ce soit ne les freine.
+     */
+    @Data
+    public static class Parse {
+        /** Parses simultanés autorisés. Au-delà, on refuse franchement plutôt que d'empiler. */
+        @Positive
+        private int maxConcurrent = 4;
+        /**
+         * Attente maximale d'une place avant refus. Une courte attente absorbe une rafale ; une
+         * longue ne ferait que déplacer la file d'attente dans les threads du serveur.
+         */
+        @Min(0)
+        private int maxWaitSeconds = 5;
     }
 
     /**

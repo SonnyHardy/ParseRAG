@@ -1,4 +1,8 @@
 spring:
+  # Delai laisse aux requetes en vol lors d'un arret gracieux (issue #56) : au-dela, elles sont
+  # coupees. Doit couvrir un parse en cours, sinon l'arret gracieux ne l'est que de nom.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   config:
     import: optional:file:.env[.properties]
   application:
@@ -38,6 +42,24 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Arret gracieux (issue #56) : sans lui, un deploiement en cours de parse tue les requetes en
+  # vol, et le client recoit une connexion coupee sans corps d'erreur exploitable.
+  shutdown: graceful
+  tomcat:
+    threads:
+      # Aligne sur la borne de concurrence du parsing (parserag.parse.max-concurrent) plus une
+      # marge pour les requetes bon marche (health, erreurs). Les 200 threads par defaut n'ont
+      # aucun rapport avec ce qu'un parse coute : ils ne font qu'autoriser 200 saturations
+      # simultanees de la memoire avant que quoi que ce soit ne freine.
+      max: 32
+      min-spare: 4
+    # Une requete non lue dans ce delai est abandonnee : protege des connexions ouvertes qui
+    # n'envoient jamais leur corps (upload interrompu, client lent).
+    # ATTENTION : ce n'est PAS un timeout de traitement - le temps de parse est borne par les
+    # plafonds de pages, dont la reconciliation avec le couperet de 180 s du proxy fait l'objet
+    # d'une issue dediee.
+    connection-timeout: 20s
+
 
 logging:
   level:
@@ -148,6 +170,22 @@ parserag:
   info:
     name: ${spring.application.name}
     version: '@project.version@'
+
+  # Identite de l'administrateur (issue #56). ADMIN_KEY_HASH porte le SHA-256 de la cle, jamais
+  # la cle : le depot ne doit contenir aucun secret, ni rien qui permette de le deviner. Vide par
+  # defaut => aucune cle admin n'est creee et GET /api/v1/health reste inaccessible.
+  #   Generer :  printf '%s' "<votre-cle>" | sha256sum
+  security:
+    admin-key-hash: ${ADMIN_KEY_HASH:}
+    admin-key-email: ${ADMIN_KEY_EMAIL:admin@parserag.local}
+
+  # Bornes d'execution du parsing (issue #56). La ressource rare est la memoire, pas le debit :
+  # un upload de 50 Mo est charge entier, le PDF est rouvert six fois par requete et le rendu
+  # d'une page coute ~9 Mo. Ces valeurs sont provisoires - a caler sur la memoire reelle du
+  # conteneur cible une fois le deploiement en place.
+  parse:
+    max-concurrent: 4
+    max-wait-seconds: 5
 
   health:
     db-ping-timeout-seconds: 3   # borne chaque sonde base (ping + lecture flyway_schema_history) : sans elle, une base down ferait attendre le connection-timeout Hikari (10 s)
