@@ -1,0 +1,80 @@
+# Integration continue (issue #58).
+#
+# Les 195 tests existaient deja ; rien ne les executait sur une PR, donc une regression n'etait vue
+# que si quelqu'un pensait a lancer ./mvnw localement.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Une PR poussee plusieurs fois de suite n'a pas besoin de faire tourner les executions
+# precedentes jusqu'au bout.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # ParseRagApplicationTests.contextLoads demarre le contexte Spring, donc ouvre une connexion et
+    # joue les migrations Flyway. Sans base, il echoue - et c'est justement le test qui verifie que
+    # le cablage complet tient, y compris les migrations : on lui donne une vraie base plutot que
+    # de l'exclure.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: parserag
+          POSTGRES_USER: parserag
+          POSTGRES_PASSWORD: parserag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U parserag"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: parserag
+      POSTGRES_USER: parserag
+      POSTGRES_PASSWORD: parserag
+      # Aucune cle d'IA, aucun secret proxy : les tests unitaires n'en ont pas besoin, et les
+      # campagnes de mesure qui feraient des appels reels restent @Disabled.
+      OTEL_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: temurin
+          # Cache du depot Maven : sans lui, chaque execution retelecharge le SDK google-genai,
+          # PDFBox et Tabula.
+          cache: maven
+
+      - name: Build and test
+        run: ./mvnw -B clean package
+
+      # Le Dockerfile fait partie du livrable depuis l'issue #58 : le casser doit faire echouer la
+      # PR, pas se decouvrir au deploiement. Build seul, sans publication.
+      - name: Build the production image
+        run: docker build -t parserag:ci .
+
+      - name: Publish test report
+        if: always()
+        # v7 et non v5 : upload-artifact@v5 tourne encore sur Node.js 20 (verifie dans son
+        # action.yml), la montee en v5 n'aurait donc pas leve l'avertissement. Le passage a
+        # Node.js 24 date de v6 ; v7 est la majeure courante et n'ajoute que des fonctions
+        # optionnelles (upload direct, ESM), sans effet sur cet usage.
+        uses: actions/upload-artifact@v7
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7

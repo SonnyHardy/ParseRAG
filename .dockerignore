@@ -1,0 +1,24 @@
+# Contexte de build (issue #58). Sans ce fichier, `target/` et le corpus de PDF de test partent
+# dans le contexte a chaque build : des centaines de Mo transferes pour rien, et un cache de
+# couches invalide des qu'un artefact local change.
+
+target/
+.git/
+.github/
+.idea/
+.mvn/wrapper/maven-wrapper.jar
+*.iml
+*.iws
+*.ipr
+
+# Secrets : ils viennent des variables d'environnement de la plateforme, jamais de l'image.
+.env
+.env.*
+
+# Corpus et rapports de mesure : utiles aux campagnes manuelles, inutiles a l'execution.
+src/test/resources/sample-pdfs/
+
+# Documentation et outillage d'exploitation
+docs/
+grafana/
+*.md

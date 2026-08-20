@@ -79,8 +79,7 @@ class VisionProviderBenchmark {
     private static final Map<String, double[]> PRICE_PER_MTOK = Map.of(
             "gemini-3.5-flash-lite", new double[]{0.30, 2.50},
             "gemini-3.1-flash-lite", new double[]{0.25, 1.50},
-            "gemini-2.5-flash-lite", new double[]{0.10, 0.40},
-            "gpt-4o-mini", new double[]{0.15, 0.60});
+            "gemini-2.5-flash-lite", new double[]{0.10, 0.40});
 
     /** Relevé d'un passage sur une fixture. */
     private record Run(int scannedPages, Set<Integer> visionPages, Set<Integer> reviewPages,
@@ -286,13 +285,11 @@ class VisionProviderBenchmark {
     private VisionFallback vision(AppProperties props) {
         VisionResponseParser parser = new VisionResponseParser(new ObjectMapper());
         ParseRagMetrics metrics = TestMetrics.metrics(registry);   // registre du harnais, aucun export
-        return "openai".equals(provider)
-                ? new OpenAiVisionFallbackService(props, parser, metrics)
-                : new GeminiVisionFallbackService(props, parser, metrics);
+        return new GeminiVisionFallbackService(props, parser, metrics);
     }
 
     private String model(AppProperties props) {
-        return "openai".equals(provider) ? props.getOpenai().getModel() : props.getGemini().getModel();
+        return props.getGemini().getModel();
     }
 
     /** Reprend les valeurs d'{@code application.yaml} (le harnais tourne sans contexte Spring). */
@@ -304,8 +301,6 @@ class VisionProviderBenchmark {
         p.getVision().setMaxPagesPerDocument(30);
         p.getGemini().setApiKey(env("GOOGLE_API_KEY", dotenv("GOOGLE_API_KEY")));
         p.getGemini().setModel(env("GEMINI_MODEL", p.getGemini().getModel()));
-        p.getOpenai().setApiKey(env("OPENAI_API_KEY", dotenv("OPENAI_API_KEY")));
-        p.getOpenai().setModel("gpt-4o-mini");
 
         p.getPageLimits().setMaxPagesScale(1000);
         p.getChunking().setMaxChunkSize(2000);

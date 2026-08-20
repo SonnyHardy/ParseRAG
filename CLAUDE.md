@@ -23,6 +23,11 @@ Maven wrapper is committed; use it.
 ./mvnw test -Dtest=ParseRagApplicationTests#contextLoads   # single test method
 ```
 
+Deployment artefacts live at the root: `Dockerfile` (multi-stage, non-root, `fontconfig` installed
+because PDFBox renders pages), `.dockerignore`, `railway.json` and `.github/workflows/build.yml`
+(issue #58). CI runs the full suite against a real Postgres service — `contextLoads` needs one — and
+builds the image, so breaking either fails the PR.
+
 Java 25 toolchain, Spring Boot 4.0.6. Lombok is an annotation processor (configured explicitly in
 `pom.xml`) — `@Data`/`@Slf4j`/`@RequiredArgsConstructor` are pervasive.
 
@@ -195,7 +200,8 @@ implementation must honour it — the pipeline has no other safety net.
 Two implementations, selected by `parserag.vision.provider` via `@ConditionalOnProperty` (exactly one
 bean at startup, so a typo surfaces as `NoSuchBeanDefinitionException` rather than silent fallthrough):
 
-- **`GeminiVisionFallbackService`** (`gemini`, **default**) — Gemini 3.5 Flash-Lite via the official
+- **`GeminiVisionFallbackService`** (`gemini`, the only implementation since issue #58 removed the
+  OpenAI provider and its SDK — 144 MB of jar became 100 MB) — Gemini 3.5 Flash-Lite via the official
   `com.google.genai:google-genai` SDK. Passes a `responseSchema` (structured outputs) so the JSON
   shape is enforced by the API, and sets `thinkingLevel = minimal` (transcription, not reasoning).
   Mind the generation gap: 3.x wants `thinkingLevel` and rejects the `thinkingBudget` of the 2.5
@@ -207,8 +213,6 @@ bean at startup, so a typo surfaces as `NoSuchBeanDefinitionException` rather th
   endpoint `GET /v1beta/models/gemini-2.5-flash-lite` answers **200** and the model is listed in the
   catalogue — only a real generation call reveals the refusal. Probe model access with
   `generateContent`, never with a metadata read.
-- **`OpenAiVisionFallbackService`** (`openai`) — the historical GPT-4o mini path, kept only to compare
-  extraction quality on the same corpus before being deleted (issue #28).
 
 Why the switch: Phase 4 of #11 showed the binding constraint was the **account-wide OpenAI RPM/TPM
 ceiling**, not our code — a 25-page scan got 9 then 12 pages through, with a *different* set of pages
@@ -427,10 +431,12 @@ existence the 404 of issue #37 is designed to hide.
 
 Two traps met while wiring it, both already fixed but worth knowing:
 
-- **swagger-annotations is pinned to 2.2.47** in `dependencyManagement`. `openai-java` pulls
-  `swagger-annotations` 2.2.31 and springdoc pulls `swagger-annotations-jakarta` 2.2.47 — *the same
-  package* `io.swagger.v3.oas.annotations` from two artefacts. The low version wins on the classpath
-  and generation dies on `NoSuchMethodError: Schema.$dynamicRef()`.
+- **The swagger-annotations arbitration is gone** — and the reason it existed is worth keeping in
+  mind. `openai-java` pulled `swagger-annotations` 2.2.31 while springdoc pulls
+  `swagger-annotations-jakarta` 2.2.47: *the same package* `io.swagger.v3.oas.annotations` from two
+  artefacts, the low version winning on the classpath and generation dying on
+  `NoSuchMethodError: Schema.$dynamicRef()`. Removing the OpenAI SDK (issue #58) removed the
+  conflict, so the `dependencyManagement` pin went with it. Any future SDK may bring it back.
 - **Never put `@Schema` on the `MultipartFile` parameter.** It replaces the schema of the whole
   request *body*: the spec then describes a raw binary instead of a form carrying a `file` part, and
   a generated client posts the wrong thing.
