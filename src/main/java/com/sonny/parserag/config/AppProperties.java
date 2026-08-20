@@ -200,6 +200,22 @@ public class AppProperties {
          */
         @Min(0)
         private int maxWaitSeconds = 5;
+
+        /**
+         * Délai au-delà duquel plus aucun <em>nouvel</em> appel vision n'est lancé pour le document
+         * en cours (issue #57) ; les pages non traitées sortent en {@code manual_review_needed}.
+         * <p>
+         * Ce n'est pas le nombre de pages qui menaçait le couperet de 180 s du proxy — 244 pages
+         * natives coûtent 7 s — mais la queue de latence du fournisseur de vision : un document de
+         * 16 pages, habituellement traité en une dizaine de secondes, a été mesuré à 702 s lors
+         * d'un décrochage.
+         * <p>
+         * Le pire cas total vaut {@code ce délai + (gemini.max-retries + 1) × gemini.timeout-ms +
+         * backoff} : un appel en vol n'est pas interrompu. C'est cette somme qui doit rester sous
+         * le couperet du proxy, pas ce délai seul.
+         */
+        @Positive
+        private int visionDeadlineSeconds = 110;
     }
 
     /**

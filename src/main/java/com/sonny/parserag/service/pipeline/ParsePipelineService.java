@@ -108,8 +108,18 @@ public class ParsePipelineService {
         // Pages scannées / image-only : routées vers le fallback vision plein-page (issue #11).
         Set<Integer> scannedPages = scannedPageDetector.scannedPages(cleaned);
         metrics.scannedPagesDetected(scannedPages.size());
-        // Budget vision partagé pour tout le document (tableaux + pages scannées) : un seul cap.
-        VisionBudget visionBudget = new VisionBudget(appProperties.getVision().getMaxPagesPerDocument());
+        /*
+         * Budget vision partage pour tout le document (tableaux + pages scannees) : un seul cap en
+         * nombre d'appels, et un budget temps (issue #57).
+         *
+         * Le temps restant se calcule depuis le debut de la requete, pas d'ici : l'extraction et le
+         * nettoyage ont deja consomme une part du delai, et l'ignorer laisserait le pire cas
+         * depasser le couperet du proxy de tout ce temps-la.
+         */
+        Duration remaining = Duration.ofSeconds(appProperties.getParse().getVisionDeadlineSeconds())
+                .minus(elapsed(startTime));
+        VisionBudget visionBudget =
+                new VisionBudget(appProperties.getVision().getMaxPagesPerDocument(), remaining);
 
         // Détection des régions partagée : extraction structurée + excision du texte (anti-doublon).
         List<TableRegion> tableRegions = tableRegionDetector.detect(bytes);
@@ -137,6 +147,13 @@ public class ParsePipelineService {
         // les instrumenter séparément compterait deux fois le même épuisement.
         if (visionBudget.max() > 0 && !visionBudget.hasRemaining()) {
             metrics.visionBudgetExhausted();
+        }
+        // Distinguer les deux causes : un cap en pages atteint est un reglage produit, un delai
+        // depasse est un incident de latence chez le fournisseur. Les confondre en exploitation
+        // ferait chercher au mauvais endroit.
+        if (visionBudget.deadlineExceeded()) {
+            metrics.visionDeadlineExceeded();
+            log.warn("Delai vision depasse — pages restantes basculees en revue manuelle");
         }
 
         List<Chunk> chunks = assembleChunks(doc.documentId(), textChunks, tables);

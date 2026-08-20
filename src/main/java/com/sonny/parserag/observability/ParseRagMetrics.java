@@ -64,6 +64,7 @@ public class ParseRagMetrics {
     public static final String VISION_DURATION    = "parserag.vision.duration";
     public static final String VISION_TOKENS      = "parserag.vision.tokens";
     public static final String VISION_BUDGET_OUT  = "parserag.vision.budget_exhausted";
+    public static final String VISION_DEADLINE_OUT = "parserag.vision.deadline_exceeded";
 
     // ── Tags (fermés) ─────────────────────────────────────────────────────────────────────
 
@@ -269,6 +270,15 @@ public class ParseRagMetrics {
     /** Le cap vision par document a été atteint : des pages partent en revue manuelle. */
     public void visionBudgetExhausted() {
         registry.counter(VISION_BUDGET_OUT).increment();
+    }
+
+    /**
+     * Le <em>délai</em> vision a été dépassé (issue #57) — distinct du cap en pages : celui-ci est
+     * un réglage produit, celui-là un incident de latence chez le fournisseur. Une hausse de ce
+     * compteur annonce des 504 côté proxy si rien n'est fait.
+     */
+    public void visionDeadlineExceeded() {
+        registry.counter(VISION_DEADLINE_OUT).increment();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────
