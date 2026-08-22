@@ -43,9 +43,15 @@ public class SecurityConfig {
     }
 
     /**
-     * Désactive l'auto-registration servlet de Spring Boot pour ApiKeyFilter.
-     * Le filtre est injecté dans la chaîne Spring Security via addFilterBefore,
-     * pas comme filtre servlet standalone — évite une double exécution.
+     * Désactive l'auto-registration servlet de Spring Boot pour ApiKeyFilter, qui est injecté dans
+     * la chaîne Spring Security et n'a rien à faire en filtre servlet autonome.
+     * <p>
+     * <strong>Ce n'est pas ce bean qui empêche la double exécution</strong> (mesuré en #59, en le
+     * réactivant délibérément : aucun changement de comportement) — c'est {@code OncePerRequestFilter},
+     * qui marque la requête et saute la seconde passe. Un {@code FilterRegistrationBean} sans ordre
+     * explicite se place d'ailleurs en {@code LOWEST_PRECEDENCE}, donc après la chaîne de sécurité.
+     * Ce qu'on protège ici est l'avenir : un ordre explicite placerait le filtre <em>avant</em>
+     * l'authentification, et le limiteur de débit cadencerait alors des requêtes sans identité.
      */
     @Bean
     public FilterRegistrationBean<ApiKeyFilter> apiKeyFilterRegistration(ApiKeyFilter filter) {
@@ -54,10 +60,7 @@ public class SecurityConfig {
         return registration;
     }
 
-    /**
-     * Même traitement pour RateLimitFilter : injecté dans la chaîne Spring Security via
-     * addFilterAfter, on désactive son auto-registration servlet pour éviter une double exécution.
-     */
+    /** Même traitement pour RateLimitFilter — mêmes raisons que ci-dessus. */
     @Bean
     public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
         FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
@@ -65,10 +68,7 @@ public class SecurityConfig {
         return registration;
     }
 
-    /**
-     * Même traitement pour RapidApiProxyFilter : injecté dans la chaîne Spring Security via
-     * addFilterBefore, on désactive son auto-registration servlet pour éviter une double exécution.
-     */
+    /** Même traitement pour RapidApiProxyFilter — mêmes raisons que ci-dessus. */
     @Bean
     public FilterRegistrationBean<RapidApiProxyFilter> rapidApiProxyFilterRegistration(RapidApiProxyFilter filter) {
         FilterRegistrationBean<RapidApiProxyFilter> registration = new FilterRegistrationBean<>(filter);

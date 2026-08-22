@@ -474,5 +474,24 @@ Two traps met while wiring it, both already fixed but worth knowing:
   which specified a home-grown subscription cycle, was closed as delegated.
 - **Tests are plain unit tests** (JUnit 5 + Mockito + `spring-test` mocks), no Spring context —
   collaborators are mocked and web plumbing uses `MockHttpServletRequest`/`MockFilterChain`. Keep new
-  tests in that style. The one exception is `ParseRagApplicationTests.contextLoads`: `@SpringBootTest`
-  needs a working datasource, so it requires the env vars above.
+  tests in that style. Two deliberate exceptions:
+  - `ParseRagApplicationTests.contextLoads`: `@SpringBootTest` needs a working datasource, so it
+    requires the env vars above.
+  - `FilterChainE2eTest` / `FilterChainWithoutMarketplaceE2eTest` (issue #59) drive the **assembled**
+    chain through `MockMvc`. What they check does not exist in a unit test by construction: the
+    *ordering* — `RapidApiProxyFilter` posts the plan, `ApiKeyFilter` short-circuits on it, the rate
+    limiter closes the march. Proven by sabotage: swapping the first two filters turns the
+    marketplace path into a `401`, and the suite goes red. They need **no database**: the
+    JDBC/JPA/Flyway autoconfigurations are excluded and the two collaborators that depend on them
+    (`ApiKeyRepository`, `JdbcTemplate`) are `@MockitoBean`. The pipeline is mocked too — the subject
+    is the chain, not parsing. Two classes because the two regimes (marketplace configured or not)
+    are two contexts: the deliberate `404` of `/api/v1/health` only exists in the second.
+
+**What is *not* tested, and why it cannot be.** Single execution per request does not come from the
+`FilterRegistrationBean(setEnabled(false))` beans, contrary to what their Javadoc suggests: it comes
+from `OncePerRequestFilter`, which marks the request and skips a second pass. Re-enabling a
+registration was measured to change **nothing** — a `FilterRegistrationBean` without an explicit
+order sits at `LOWEST_PRECEDENCE`, so the servlet copy runs after the security chain and is skipped.
+Those beans are therefore belt-and-braces against a *future* misconfiguration (an explicit order
+placing a filter before authentication), not the mechanism that holds today. No test is written for
+it because no failure can be produced without also inventing that misconfiguration.
