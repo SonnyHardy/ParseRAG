@@ -167,6 +167,16 @@ key-holder that an admin endpoint exists there. For non-admins the endpoint simp
 The check sits in the controller, not a filter — one endpoint doesn't justify a fourth filter, and
 going through `ParseRagException` reuses the standard error rendering.
 
+`DatabaseKeepAlive` (issue #15) runs a `SELECT 1` every 6 hours, and it is not decoration: Supabase's
+free tier **pauses a project after 7 days of inactivity**, while the public path has performed *no*
+database read since issue #54 — authentication is a secret comparison. A week of perfectly normal
+RapidAPI traffic can therefore let the database go idle. The cost is not a red health check: the
+**next deploy fails to start**, Flyway being unable to connect. The container `HEALTHCHECK` does not
+help, since `/actuator/health` deliberately avoids the database (issue #58). A failed ping is counted
+(`parserag.db.keepalive`) rather than thrown — rethrowing would kill the schedule outright, and the
+component would silently stop protecting what it exists for. The interval is expressed in **minutes**
+so the wiring can be verified in one minute rather than six hours.
+
 `HealthService` probes only what the app **cannot** guarantee about itself; a self-check run by the
 app is a tautology (if it answers, it's alive), which is why there is no "application" component and
 why heap/memory is deliberately absent — memory is a sawtooth metric, not a binary state, and a

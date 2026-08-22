@@ -65,6 +65,7 @@ public class ParseRagMetrics {
     public static final String VISION_TOKENS      = "parserag.vision.tokens";
     public static final String VISION_BUDGET_OUT  = "parserag.vision.budget_exhausted";
     public static final String VISION_DEADLINE_OUT = "parserag.vision.deadline_exceeded";
+    public static final String DB_KEEPALIVE      = "parserag.db.keepalive";
 
     // ── Tags (fermés) ─────────────────────────────────────────────────────────────────────
 
@@ -265,6 +266,15 @@ public class ParseRagMetrics {
             registry.counter(VISION_TOKENS, "provider", provider, "model", model, "type", type.tag())
                     .increment(tokens);
         }
+    }
+
+    /**
+     * Ping de maintien en éveil de la base (issue #15). Ce compteur est le seul témoin d'un
+     * composant dont la panne est silencieuse : si les échecs s'accumulent, une base gratuite
+     * finira en pause, et c'est le <em>démarrage</em> suivant qui échouera — pas la requête en cours.
+     */
+    public void databaseKeepAlive(boolean success) {
+        registry.counter(DB_KEEPALIVE, "outcome", success ? "success" : "failure").increment();
     }
 
     /** Le cap vision par document a été atteint : des pages partent en revue manuelle. */
