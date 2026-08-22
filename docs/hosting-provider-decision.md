@@ -85,8 +85,10 @@ Ces points sont des tâches de déploiement, pas des remarques :
   normal peut laisser la base intouchée. Suivraient `/api/v1/health` en `db: DOWN`, et surtout, au
   redéploiement suivant, **Flyway incapable de se connecter et l'application qui ne démarre pas**.
   Le `HEALTHCHECK` du conteneur ne protège pas : il interroge `/actuator/health`, qui ne touche pas
-  la base. **Un ping périodique est nécessaire**, pas optionnel — moniteur externe appelant
-  `/api/v1/health` avec la clé admin, ou tâche planifiée.
+  la base. **Traité** : `DatabaseKeepAlive` exécute un `SELECT 1` toutes les 6 h
+  (`parserag.database.keep-alive`), à désactiver sur une base auto-hébergée qui ne se met pas en
+  pause. Le compteur `parserag.db.keepalive` en est le seul témoin — un ping qui échoue en silence
+  ramène exactement la panne qu'il devait éviter.
 - **Choisir le bon point de connexion.** La connexion directe (port 5432) est en **IPv6 sur les
   offres gratuites** ; l'IPv4 est une option payante. Si l'hébergeur ne sort pas en IPv6, il faut le
   **session pooler** (port 5432, IPv4 sur tous les plans), recommandé pour un serveur persistant.
@@ -114,7 +116,8 @@ Ces points sont des tâches de déploiement, pas des remarques :
 
 - Allouer **~2 Go** et descendre `parse.max-concurrent` de 4 à **2** : la valeur est marquée
   provisoire depuis l'issue #56, et 646 Mio par parse ne laissent pas la place à quatre simultanés.
-- Mettre en place le **ping périodique** de la base (voir ci-dessus).
+- Vérifier que le **ping de maintien en éveil** est actif (`parserag.db.keepalive`, tag
+  `outcome=success`) après le premier déploiement.
 - Ajouter `sslmode=require` et pointer le **session pooler** Supabase si l'hébergeur n'a pas d'egress
   IPv6.
 - Surveiller `parserag.parse.slots_free` et la mémoire réelle avant de remonter l'un ou l'autre.

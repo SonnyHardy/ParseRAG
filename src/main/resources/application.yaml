@@ -203,6 +203,16 @@ parserag:
     # au-dessus du couperet.
     vision-deadline-seconds: 110
 
+  # Maintien en eveil de la base (issue #15). L'offre gratuite de Supabase met un projet en pause
+  # apres 7 jours d'inactivite, et depuis l'issue #54 le chemin public ne lit plus en base : une
+  # semaine de trafic normal peut suffire. La pause ne coute pas qu'un health check rouge - au
+  # redeploiement suivant, Flyway ne se connecte pas et l'application ne demarre pas.
+  # A desactiver sur une base auto-hebergee, qui ne se met pas en pause.
+  database:
+    keep-alive:
+      enabled: ${DB_KEEP_ALIVE_ENABLED:true}
+      interval-minutes: 360   # 6 h, soit 4 requetes/jour : 7x plus souvent que necessaire, la marge absorbe un incident sans relancer le compteur d'inactivite. En minutes pour rester verifiable en une minute.
+
   health:
     db-ping-timeout-seconds: 3   # borne chaque sonde base (ping + lecture flyway_schema_history) : sans elle, une base down ferait attendre le connection-timeout Hikari (10 s)
     disk-path: ${HEALTH_DISK_PATH:.}  # volume surveille ; en conteneur, pointer le volume ou PDFBox ecrit ses temporaires (/tmp)
