@@ -2,6 +2,7 @@ package com.sonny.parserag.exception;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -29,13 +30,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ParseRagException.class)
     public ResponseEntity<ErrorResponse> handleParseRag(ParseRagException ex) {
         log.warn("Business error [{}]: {}", ex.getErrorCode(), ex.getMessage());
-        return ResponseEntity
-                .status(ex.getStatus())
-                .body(new ErrorResponse(
-                        ex.getErrorCode(),
-                        ex.getMessage(),
-                        ex.getStatus().value()
-                ));
+
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        // Un refus temporaire sans Retry-After n'est pas actionnable : le client choisit alors
+        // entre marteler le service et abandonner. Les erreurs définitives (format invalide,
+        // document trop long) n'en portent volontairement pas — y réessayer serait absurde.
+        if (ex.getRetryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()));
+        }
+
+        return response.body(new ErrorResponse(
+                ex.getErrorCode(),
+                ex.getMessage(),
+                ex.getStatus().value()
+        ));
     }
 
     // ── Fichier trop lourd (Spring rejette avant d'atteindre le controller) ──

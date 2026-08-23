@@ -191,17 +191,22 @@ parserag:
   # d'une page coute ~9 Mo. Ces valeurs sont provisoires - a caler sur la memoire reelle du
   # conteneur cible une fois le deploiement en place.
   parse:
-    max-concurrent: 4
-    max-wait-seconds: 5
-    # Budget temps des appels vision (issue #57). Arithmetique du pire cas, a garder coherente :
+    max-concurrent: ${PARSE_MAX_CONCURRENT:2}
+    # Attente d'une place avant refus en 503 SERVICE_BUSY. Releve de 5 a 15 s : 5 s etait calibre
+    # sur des parses courts, alors qu'un document avec vision prend 10 a 30 s - la place ne se
+    # liberait donc quasiment jamais pendant l'attente, et le refus tombait sans avoir servi a rien.
+    max-wait-seconds: 15
+    # Budget temps des appels vision (issue #57). Arithmetique du pire cas, a garder coherente -
+    # l'attente d'une place en fait partie, ce que la version precedente oubliait :
     #   proxy RapidAPI          180 s (couperet, 504 sans corps au-dela)
     #   - marge reseau/proxy     20 s
     #   = plafond ParseRAG      160 s
-    #   - dernier appel vision    50 s  (gemini.max-retries + 1) x timeout-ms + backoff
-    #   = delai vision          110 s
-    # Toucher gemini.timeout-ms ou gemini.max-retries sans refaire ce calcul remet le pire cas
-    # au-dessus du couperet.
-    vision-deadline-seconds: 110
+    #   - attente d'une place    15 s  (max-wait-seconds, consommee avant que le parse ne commence)
+    #   - dernier appel vision   50 s  (gemini.max-retries + 1) x timeout-ms + backoff
+    #   = delai vision           95 s
+    # Toucher max-wait-seconds, gemini.timeout-ms ou gemini.max-retries sans refaire ce calcul
+    # remet le pire cas au-dessus du couperet.
+    vision-deadline-seconds: 95
 
   # Maintien en eveil de la base (issue #15). L'offre gratuite de Supabase met un projet en pause
   # apres 7 jours d'inactivite, et depuis l'issue #54 le chemin public ne lit plus en base : une

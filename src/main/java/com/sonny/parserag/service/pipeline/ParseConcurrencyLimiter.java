@@ -21,7 +21,9 @@ import java.util.function.Supplier;
  * Avec les 200 threads Tomcat par défaut, rien n'empêchait 200 parses concurrents de vider le tas.
  *
  * <p><strong>Refuser franchement plutôt qu'empiler.</strong> Passé une courte attente, la requête
- * est refusée par un {@code 503} portant {@code Retry-After}. Une file d'attente sans borne ne
+ * est refusée par un {@code 503} portant {@code Retry-After}, valorisé à l'attente déjà consentie —
+ * la moins mauvaise indication disponible, personne ne sachant quand une place se libérera. Une
+ * file d'attente sans borne ne
  * ferait que déplacer le problème dans les threads du serveur : le client attendrait de toute
  * façon, mais sans savoir qu'il attend, et le proxy finirait par couper à sa place.
  *
@@ -61,15 +63,25 @@ public class ParseConcurrencyLimiter {
             // l'arrêt gracieux puisse faire son travail.
             Thread.currentThread().interrupt();
             throw new ParseRagException(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_BUSY",
-                    "Server is shutting down. Please retry.");
+                    "Server is shutting down. Please retry.", maxWaitSeconds);
         }
 
         if (!acquired) {
             metrics.parseRejectedBusy();
             log.warn("Parse refusé : {} places toutes occupées après {} s d'attente",
                     slots.availablePermits(), maxWaitSeconds);
+            /*
+             * Retry-After = l'attente deja consentie. C'est l'echelle de la contention observee,
+             * donc la moins mauvaise indication disponible : personne ne sait quand une place se
+             * liberera. Borne a 1 s : un Retry-After a 0 (attente configuree a zero) inviterait a
+             * revenir immediatement, donc a se faire refuser a nouveau.
+             * Le javadoc de cette classe annoncait cet en-tete alors qu'il n'etait pas pose - un
+             * 503 sans Retry-After laisse le client marteler ou abandonner.
+             */
+            int retryAfter = Math.max(1, maxWaitSeconds);
             throw new ParseRagException(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_BUSY",
-                    "Server is at capacity. Please retry shortly.");
+                    "Server is at capacity. Please retry in %d seconds.".formatted(retryAfter),
+                    retryAfter);
         }
 
         try {

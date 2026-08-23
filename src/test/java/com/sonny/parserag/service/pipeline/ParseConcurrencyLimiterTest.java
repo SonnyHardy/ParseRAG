@@ -71,6 +71,10 @@ class ParseConcurrencyLimiterTest {
 
         assertEquals("SERVICE_BUSY", rejected.getErrorCode());
         assertEquals(503, rejected.getStatus().value());
+        // Un 503 sans Retry-After laisse le client marteler ou abandonner : l'en-tete est rendu
+        // par GlobalExceptionHandler a partir de cette valeur.
+        assertEquals(1, rejected.getRetryAfterSeconds(),
+                "borne a 1 s : un Retry-After a 0 inviterait a revenir se faire refuser aussitot");
         assertEquals(1, meters.get(ParseRagMetrics.PARSE_REJECTED_BUSY).counter().count());
 
         release.countDown();
