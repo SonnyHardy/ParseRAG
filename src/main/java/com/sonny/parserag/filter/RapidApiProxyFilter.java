@@ -74,7 +74,7 @@ public class RapidApiProxyFilter extends OncePerRequestFilter {
      * exempte, et sa portee est bornee a un UP/DOWN nu (cf. {@link ProbePaths}).
      */
     @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
+    protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
         return ProbePaths.isLivenessProbe(request);
     }
 
