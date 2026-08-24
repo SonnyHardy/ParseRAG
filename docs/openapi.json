@@ -10,7 +10,7 @@
             "name": "Proprietary"
         },
         "title": "ParseRAG API",
-        "version": "0.0.1-SNAPSHOT"
+        "version": "1.0.0"
     },
     "servers": [
         {
@@ -88,7 +88,7 @@
                                 }
                             }
                         },
-                        "description": "MISSING_API_KEY \u00e2\u0080\u0094 no X-API-Key header."
+                        "description": "MISSING_API_KEY — no X-API-Key header."
                     },
                     "403": {
                         "content": {
@@ -108,7 +108,7 @@
                                 }
                             }
                         },
-                        "description": "FILE_TOO_LARGE \u00e2\u0080\u0094 over the 50 MB limit."
+                        "description": "FILE_TOO_LARGE — over the 50 MB limit."
                     },
                     "415": {
                         "content": {
@@ -118,7 +118,7 @@
                                 }
                             }
                         },
-                        "description": "INVALID_FILE_FORMAT or UNSUPPORTED_MEDIA_TYPE \u00e2\u0080\u0094 the upload is not a PDF."
+                        "description": "INVALID_FILE_FORMAT or UNSUPPORTED_MEDIA_TYPE — the upload is not a PDF."
                     },
                     "422": {
                         "content": {
@@ -128,7 +128,7 @@
                                 }
                             }
                         },
-                        "description": "DOCUMENT_TOO_LONG \u00e2\u0080\u0094 more pages than your plan allows."
+                        "description": "DOCUMENT_TOO_LONG — more pages than your plan allows."
                     },
                     "429": {
                         "content": {
@@ -138,7 +138,7 @@
                                 }
                             }
                         },
-                        "description": "RATE_LIMIT_EXCEEDED \u00e2\u0080\u0094 the service-wide traffic guard tripped; wait Retry-After seconds. Plan quotas are enforced by the marketplace proxy before the request reaches ParseRAG."
+                        "description": "RATE_LIMIT_EXCEEDED — the service-wide traffic guard tripped; wait Retry-After seconds. Plan quotas are enforced by the marketplace proxy before the request reaches ParseRAG."
                     },
                     "500": {
                         "content": {
@@ -148,7 +148,7 @@
                                 }
                             }
                         },
-                        "description": "INTERNAL_ERROR \u00e2\u0080\u0094 unexpected failure."
+                        "description": "INTERNAL_ERROR — unexpected failure."
                     },
                     "503": {
                         "content": {
