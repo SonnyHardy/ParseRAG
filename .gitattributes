@@ -1,2 +1,6 @@
-/mvnw text eol=lf
+# Le wrapper Maven est un script sh execute tel quel par le Dockerfile et par la CI : en CRLF,
+# l'interpreteur echoue sur `bad interpreter`. Le motif est volontairement NON ancre a la racine
+# depuis le passage en monorepo (issue #66) - `/mvnw` ne designait plus rien une fois le backend
+# descendu dans backend/.
+mvnw text eol=lf
 *.cmd text eol=crlf

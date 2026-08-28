@@ -4,6 +4,18 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Front Angular (issue #66) ###
+# Les motifs ci-dessus sont volontairement non ancres : `target/` couvre deja backend/target/.
+# Ceux-ci le sont, parce qu'ils ne concernent que le front et qu'un `dist/` non ancre attraperait
+# n'importe quel dossier de meme nom ailleurs dans le depot.
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.angular/
+/frontend/.vercel/
+/frontend/coverage/
+/frontend/.env
+/frontend/.env.*
+
 ### STS ###
 .apt_generated
 .classpath
@@ -35,4 +47,11 @@ build/
 
 .env
 
-/src/test/resources/sample-pdfs/results/
+# Rapports des campagnes de mesure (ColumnDetectionBenchmark, TableQualityBenchmark,
+# VisionProviderBenchmark) : produits localement, jamais committes.
+#
+# Le motif etait ancre `/src/test/...` et a cesse de correspondre au deplacement du backend
+# (issue #66) : 60 fichiers de resultats se sont retrouves proposes au commit. Meme piege que
+# `/mvnw` dans .gitattributes. Ancre sur le nouveau chemin, pas relache : un `results/` non ancre
+# attraperait n'importe quel dossier de meme nom ailleurs dans le monorepo.
+/backend/src/test/resources/sample-pdfs/results/

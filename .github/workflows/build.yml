@@ -1,13 +1,28 @@
-# Integration continue (issue #58).
+# Integration continue du backend (issue #58, reprise pour le monorepo a l'issue #66).
 #
 # Les 195 tests existaient deja ; rien ne les executait sur une PR, donc une regression n'etait vue
 # que si quelqu'un pensait a lancer ./mvnw localement.
 name: build
 
+# Filtre de chemins (issue #66). Sans lui, une modification de CSS dans frontend/ leverait un
+# service Postgres et rejouerait toute la suite back : plusieurs minutes de calcul pour un fichier
+# que le jar ne contient pas. Le workflow lui-meme est dans la liste, sinon on ne saurait pas
+# qu'on vient de le casser.
+#
+# Aucune protection de branche n'exige ce check (depot prive sans GitHub Pro), donc une PR
+# purement front n'est pas bloquee en attente d'un statut qui ne viendra jamais. Si une regle de
+# protection est ajoutee un jour, il faudra un job de repli qui rende le check vert sur les PR
+# hors perimetre.
 on:
   pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/build.yml'
   push:
     branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/build.yml'
 
 # Une PR poussee plusieurs fois de suite n'a pas besoin de faire tourner les executions
 # precedentes jusqu'au bout.
@@ -18,6 +33,12 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # Le projet Maven vit sous backend/ depuis l'issue #66. Pose ici plutot que repete sur chaque
+    # `run`, ce qui laisserait un `cd` a oublier au prochain ajout d'etape.
+    defaults:
+      run:
+        working-directory: backend
 
     # ParseRagApplicationTests.contextLoads demarre le contexte Spring, donc ouvre une connexion et
     # joue les migrations Flyway. Sans base, il echoue - et c'est justement le test qui verifie que
@@ -58,12 +79,20 @@ jobs:
           # Cache du depot Maven : sans lui, chaque execution retelecharge le SDK google-genai,
           # PDFBox et Tabula.
           cache: maven
+          # La cle de cache est calculee sur les pom.xml trouves. Sans ce chemin explicite,
+          # setup-java balaye tout le depot et un futur pom sous un autre dossier invaliderait le
+          # cache du backend sans raison.
+          cache-dependency-path: backend/pom.xml
 
       - name: Build and test
         run: ./mvnw -B clean package
 
       # Le Dockerfile fait partie du livrable depuis l'issue #58 : le casser doit faire echouer la
       # PR, pas se decouvrir au deploiement. Build seul, sans publication.
+      #
+      # Le `.` est resolu dans backend/ (working-directory ci-dessus), donc le contexte de build
+      # est bien backend/ et non la racine : c'est la meme portee que celle configuree sur Railway
+      # (Root Directory = backend), ce qui garantit qu'un build vert en CI est reproductible la-bas.
       - name: Build the production image
         run: docker build -t parserag:ci .
 
@@ -76,5 +105,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
-          path: target/surefire-reports/
+          # Chemin depuis la racine du depot : `defaults.run.working-directory` ne s'applique
+          # qu'aux etapes `run`, jamais aux entrees d'une action.
+          path: backend/target/surefire-reports/
           retention-days: 7
