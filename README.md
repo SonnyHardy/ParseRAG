@@ -286,7 +286,23 @@ git clone https://github.com/SonnyHardy/ParseRAG.git
 cd ParseRAG
 ```
 
-Create a `.env` file at the project root:
+### Repository layout
+
+The repository holds two deliverables, each self-contained, each with its own toolchain:
+
+```
+ParseRAG/
+├── backend/     Spring Boot API — pom.xml, src/, mvnw, Dockerfile, railway.json
+├── frontend/    Angular landing page
+├── docs/        OpenAPI snapshot, client examples, brand assets, RapidAPI runbooks
+├── grafana/     dashboards and alert rules
+└── .github/     one workflow per deliverable, each scoped to its own paths
+```
+
+Every command below runs **from `backend/`** unless stated otherwise.
+
+Create a `.env` file in `backend/`, next to `pom.xml` — Spring resolves `optional:file:.env`
+relative to the working directory, so a `.env` left at the repository root is silently ignored:
 
 ```properties
 POSTGRES_PORT=5432
@@ -306,6 +322,7 @@ RAPIDAPI_PROXY_SECRET=   # marketplace integration; empty locally, where the int
 Then:
 
 ```bash
+cd backend
 ./mvnw spring-boot:run
 ```
 
@@ -335,13 +352,17 @@ keys are **restricted to administration**: a non-admin key calling the origin ge
 ### Build and test
 
 ```bash
+cd backend
 ./mvnw clean package   # build + run tests
 ./mvnw test            # tests only
 ```
 
 ### Run it in Docker
 
+The build context is `backend/`, not the repository root — the image never sees the frontend:
+
 ```bash
+cd backend
 docker build -t parserag .
 docker run -p 8080:8080 \
   -e POSTGRES_HOST=host.docker.internal -e POSTGRES_PORT=5432 \
@@ -365,9 +386,13 @@ point — on scanned documents only, in production only.
 | `HEALTH_DISK_PATH` | no | Set to `/tmp` in a container — the disk probe must watch the volume PDFBox writes to |
 | `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_AUTH`, `DEPLOY_ENV` | no | Telemetry export |
 
-`railway.json` points Railway at the Dockerfile and at `/actuator/health` — the only unauthenticated
-endpoint, returning a bare `UP`/`DOWN` with no details. The detailed `/api/v1/health` stays
-admin-only.
+`backend/railway.json` points Railway at the Dockerfile and at `/actuator/health` — the only
+unauthenticated endpoint, returning a bare `UP`/`DOWN` with no details. The detailed
+`/api/v1/health` stays admin-only.
+
+The Railway service has its **Root Directory set to `backend`**: that is what makes it find
+`railway.json` and build with the same context as CI. Move the backend and you must change that
+setting in the same breath, or the next deploy fails on a Dockerfile it cannot find.
 
 **Migrations run at startup**, so a deploy that rolls out two instances at once has them both call
 Flyway; Flyway takes a lock, and the second waits. Rolling *back* the application over an already
@@ -381,10 +406,12 @@ springdoc. Springdoc is **disabled by default** — the spec is served only unde
 so no documentation endpoint is exposed in production:
 
 ```bash
+cd backend
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
 
 # in another shell — $KEY is your admin key (see ADMIN_KEY_HASH); no path is exempt
-curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
+# note the ../ : the spec is a shared artefact and lives at the repository root, not under backend/
+curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > ../docs/openapi.json
 ```
 
 The `json.tool` pass is what keeps the committed file readable and its diffs reviewable — springdoc

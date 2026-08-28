@@ -12,21 +12,55 @@ marketplace**, which authenticates the consumer, enforces the quota of their pla
 
 Code comments and Javadoc are written in French. Match that convention when editing existing files.
 
+## Repository layout (issue #66)
+
+**The repository root is no longer the Maven project.** It became a monorepo carrying two
+deliverables, each self-contained, each with its own toolchain:
+
+```
+ParseRAG/
+├── backend/     the Spring Boot API — pom.xml, src/, mvnw, .mvn/, Dockerfile,
+│                .dockerignore, railway.json, .env
+├── frontend/    the Angular landing page (issue #67 onward)
+├── docs/        openapi.json, examples/, brand/, RapidAPI runbooks
+├── grafana/     dashboards and alert rules
+└── .github/     build.yml (backend) and frontend.yml, each scoped by paths
+```
+
+`docs/` and `grafana/` stay at the root deliberately: the frontend consumes `docs/openapi.json` at
+build time (issue #72), and `grafana/` is operations rather than backend source. Keeping them out of
+`backend/` also keeps them out of the Docker build context for free, which is why
+`backend/.dockerignore` no longer needs to exclude them.
+
+**Every path below is relative to `backend/` unless it starts with `docs/`, `grafana/` or
+`.github/`.** Three things break silently if that is forgotten:
+
+- `.env` is read as `optional:file:.env`, resolved against the **working directory**. Left at the
+  repository root it is ignored without a word, and the app fails on a missing `POSTGRES_*`.
+- The Docker build context is `backend/`, matching the Railway service's **Root Directory =
+  `backend`**. CI builds with the same scope on purpose; if the two ever diverge, a green CI build
+  no longer proves the deployed image builds.
+- `.gitattributes` carries `mvnw text eol=lf` **unanchored**. It used to be `/mvnw`, which stopped
+  matching the moment the wrapper moved; a CRLF `mvnw` fails with `bad interpreter` in the image.
+
 ## Build & run
 
-Maven wrapper is committed; use it.
+Maven wrapper is committed; use it. All of these run from `backend/`.
 
 ```bash
+cd backend
 ./mvnw clean package          # build + run tests
-./mvnw spring-boot:run        # run locally (needs Postgres + .env, see below)
+./mvnw spring-boot:run        # run locally (needs Postgres + backend/.env, see below)
 ./mvnw test                   # all tests
 ./mvnw test -Dtest=ParseRagApplicationTests#contextLoads   # single test method
 ```
 
-Deployment artefacts live at the root: `Dockerfile` (multi-stage, non-root, `fontconfig` installed
-because PDFBox renders pages), `.dockerignore`, `railway.json` and `.github/workflows/build.yml`
-(issue #58). CI runs the full suite against a real Postgres service — `contextLoads` needs one — and
-builds the image, so breaking either fails the PR.
+Deployment artefacts live in `backend/`: `Dockerfile` (multi-stage, non-root, `fontconfig` installed
+because PDFBox renders pages), `.dockerignore` and `railway.json`; CI is
+`.github/workflows/build.yml` (issue #58). CI runs the full suite against a real Postgres service —
+`contextLoads` needs one — and builds the image, so breaking either fails the PR. It is scoped to
+`backend/**`, so a frontend-only change does not spin up Postgres; `frontend.yml` is its symmetric
+counterpart and stays inert until `frontend/package.json` exists.
 
 Java 25 toolchain, Spring Boot 4.0.6. Lombok is an annotation processor (configured explicitly in
 `pom.xml`) — `@Data`/`@Slf4j`/`@RequiredArgsConstructor` are pervasive.
@@ -52,7 +86,7 @@ Telemetry (issue #38) is off unless `OTEL_ENABLED=true`; when on it also needs
 `Authorization` header value — Grafana Cloud: `Basic <base64 of instanceID:token>`). `DEPLOY_ENV`
 (default `dev`) tags the exported data.
 
-Postgres must be reachable. Flyway runs migrations from `src/main/resources/db/migration` on
+Postgres must be reachable. Flyway runs migrations from `backend/src/main/resources/db/migration` on
 startup (`baseline-on-migrate: true`, `ddl-auto: none` — schema is owned by Flyway, never Hibernate).
 **No key is seeded any more** (issue #56). V1 did seed one, and this file used to claim that V3
 corrected its hash and granted it admin — **it never did**: V3 only adds the column with
@@ -227,7 +261,7 @@ bean at startup, so a typo surfaces as `NoSuchBeanDefinitionException` rather th
 Why the switch: Phase 4 of #11 showed the binding constraint was the **account-wide OpenAI RPM/TPM
 ceiling**, not our code — a 25-page scan got 9 then 12 pages through, with a *different* set of pages
 each run, while the `VisionBudget` cap (20/doc) never even engaged. See
-`src/test/resources/sample-pdfs/results/PHASE4-scanned-vision-2026-06-26.md`.
+`backend/src/test/resources/sample-pdfs/results/PHASE4-scanned-vision-2026-06-26.md`.
 
 Shared, provider-independent pieces: `VisionResponseParser` (JSON → domain: tolerates Markdown fences,
 rectangularizes ragged rows **by padding only** — never truncates — and rejects grids under 2 columns)
@@ -437,8 +471,10 @@ Three artefacts, all public-facing and all in English (the code's comments stay 
 hand-written file — regenerate it whenever an endpoint, a response model or an error code changes:
 
 ```bash
+cd backend
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=docs
-curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > docs/openapi.json
+# note the ../ : the spec is a shared artefact, it lives at the repository root
+curl -sS -H "X-API-Key: $KEY" http://localhost:8080/v3/api-docs   | python3 -m json.tool > ../docs/openapi.json
 ```
 
 springdoc is **off by default** (`springdoc.api-docs.enabled: false`); the `docs` profile

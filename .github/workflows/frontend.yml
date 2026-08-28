@@ -1,0 +1,79 @@
+# Integration continue de la landing page (issue #66).
+#
+# Symetrique de build.yml : avant le monorepo, rien ne construisait le front, donc une PR qui
+# cassait le build Angular passait au vert. Un build casse doit faire echouer la PR, pas se
+# decouvrir au deploiement Vercel.
+name: frontend
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Nom distinct de celui de build.yml a dessein : les deux workflows affichaient un check
+  # nomme `build` sur la meme PR, impossible a distinguer dans la liste.
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Le projet Angular est initialise a l'issue #67 : jusque-la, frontend/ ne contient qu'un
+      # README. Sans cette garde, le premier commit qui touche ce dossier echoue sur un `npm ci`
+      # sans package.json - un rouge qui n'apprend rien et qu'on prend l'habitude d'ignorer, ce qui
+      # est exactement ce qui rend une CI inutile.
+      #
+      # La garde est ici et non en `if:` de job : `hashFiles` lit l'espace de travail, qui n'existe
+      # pas avant le checkout, et n'est de toute facon pas disponible dans le `if` d'un job. Elle y
+      # aurait ete toujours fausse - le workflow serait reste inerte meme une fois le projet cree,
+      # panne d'autant plus couteuse qu'elle se presente comme un succes.
+      - name: Is the Angular project initialised yet?
+        id: guard
+        run: |
+          if [ -f package.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::frontend/package.json absent, initialisation prevue a l'issue #67 - rien a construire."
+          fi
+
+      - name: Set up Node.js
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/setup-node@v6
+        with:
+          # Aligne sur le poste de developpement (Node 25 au 28/08/2026). A relire quand Vercel
+          # change sa version par defaut : construire ici sur une majeure differente de celle qui
+          # deploie, c'est se garantir une panne visible seulement en production.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` et non `npm install` : il exige un package-lock.json coherent et echoue au lieu de
+      # le reecrire en silence. Une CI qui resout les versions elle-meme ne teste pas ce qui sera
+      # deploye.
+      - name: Install dependencies
+        if: steps.guard.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Lint
+        if: steps.guard.outputs.ready == 'true'
+        run: npm run lint --if-present
+
+      - name: Build
+        if: steps.guard.outputs.ready == 'true'
+        run: npm run build
