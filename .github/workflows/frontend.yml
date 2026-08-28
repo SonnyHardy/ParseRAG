@@ -21,7 +21,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # Nom distinct de celui de build.yml a dessein : les deux workflows affichaient un check
+  # nomme `build` sur la meme PR, impossible a distinguer dans la liste.
+  frontend:
     runs-on: ubuntu-latest
 
     defaults:
