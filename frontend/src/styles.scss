@@ -1,0 +1,11 @@
+// Styles globaux. Les tokens de marque issus du canevas Claude Design viendront ici (issue #68) :
+// ils surchargent le preset Aura configure dans app.config.ts plutot que de le remplacer.
+@use 'primeicons/primeicons.css';
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}

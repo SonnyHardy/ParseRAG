@@ -74,6 +74,16 @@ jobs:
         if: steps.guard.outputs.ready == 'true'
         run: npm run lint --if-present
 
+      # `--watch=false` est porte par le script npm : `ng test` ecoute par defaut et le job
+      # resterait bloque jusqu'au delai d'expiration du runner.
+      - name: Test
+        if: steps.guard.outputs.ready == 'true'
+        run: npm test
+
+      # PRIMENG_LICENSE_KEY n'est pas fournie ici a dessein : le build doit rester vert sans elle,
+      # sinon toute PR d'un poste sans la cle echouerait. PrimeNG se contente d'un avertissement
+      # ([PrimeUI] PrimeUI license is not configured.), verifie a l'issue #67. La cle est posee sur
+      # Vercel, ou elle sert au build reellement publie.
       - name: Build
         if: steps.guard.outputs.ready == 'true'
         run: npm run build

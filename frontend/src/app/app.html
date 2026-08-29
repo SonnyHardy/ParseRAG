@@ -1,0 +1,28 @@
+<!--
+  Page d'attente du socle (issue #67). Le contenu reel de la landing page est ecrit a l'issue #69,
+  a partir du canevas et de la copie de l'issue #68.
+
+  Ce qui est ici n'est pas de la decoration : c'est le harnais qui prouve que le socle tient.
+  - un <h1> et un paragraphe : verifient que le prerendu place bien le texte dans le HTML servi ;
+  - un <a pButton> : verifie qu'un composant PrimeNG rend cote serveur, qui est la seule question
+    ouverte du socle. Un composant qui touche `window` au premier rendu ne casse pas le build, il
+    vide silencieusement le HTML indexe.
+  Il porte deja la forme definitive du CTA, lien externe vers le listing avec rel="noopener".
+-->
+<main class="shell">
+  <h1>ParseRAG</h1>
+  <p>Turn any PDF into embedding-ready JSON chunks for your RAG pipeline.</p>
+
+  <a
+    pButton
+    class="shell__cta"
+    href="https://rapidapi.com/parserag-parserag-default/api/parserag"
+    target="_blank"
+    rel="noopener noreferrer"
+    >View the API on RapidAPI</a
+  >
+
+  <p class="shell__note">
+    Scaffold only. Design and copy land in issues #68 and #69.
+  </p>
+</main>
