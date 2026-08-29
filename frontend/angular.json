@@ -33,12 +33,9 @@
               "src/styles.scss"
             ],
             "server": "src/main.server.ts",
-            "outputMode": "server",
+            "outputMode": "static",
             "security": {
               "allowedHosts": []
-            },
-            "ssr": {
-              "entry": "src/server.ts"
             },
             "outputPath": "dist/parserag-frontend"
           },
@@ -70,10 +67,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "parserag-site:build:production"
+              "buildTarget": "parserag-frontend:build:production"
             },
             "development": {
-              "buildTarget": "parserag-site:build:development"
+              "buildTarget": "parserag-frontend:build:development"
             }
           },
           "defaultConfiguration": "development"

@@ -11,7 +11,6 @@
     "prestart": "node scripts/write-license.mjs",
     "pretest": "node scripts/write-license.mjs",
     "prewatch": "node scripts/write-license.mjs",
-    "serve:ssr": "node dist/parserag-frontend/server/server.mjs",
     "test:watch": "ng test"
   },
   "private": true,
@@ -27,7 +26,6 @@
     "@angular/router": "22.1.4",
     "@angular/ssr": "22.1.6",
     "@primeuix/themes": "3.0.0",
-    "express": "5.2.1",
     "primeicons": "8.0.0",
     "primeng": "22.1.0",
     "rxjs": "7.8.2",
@@ -37,7 +35,6 @@
     "@angular/build": "22.1.6",
     "@angular/cli": "22.1.6",
     "@angular/compiler-cli": "22.1.4",
-    "@types/express": "5.0.6",
     "@types/node": "24.13.3",
     "jsdom": "28.1.0",
     "prettier": "3.9.6",

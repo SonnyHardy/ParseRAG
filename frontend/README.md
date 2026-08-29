@@ -39,6 +39,17 @@ version silencieuse six mois plus tard se decouvrirait en production.
 Verifie sur le HTML produit : le texte, le `<h1>` et le composant PrimeNG y sont, sans executer une
 ligne de JavaScript. C'est le contraire de la fiche RapidAPI, qui sert une coquille.
 
+**Sortie statique, aucun serveur a l'execution.** `ng new --ssr` genere par defaut
+`outputMode: "server"` et un serveur Express dans `src/server.ts`, pour du rendu a la demande. Une
+landing page n'a aucune donnee dynamique : tout est calculable au build, et un serveur Node ne
+ferait que recalculer a chaque visite une page qui ne change pas, en ajoutant un demarrage a froid
+et une surface a surveiller. `outputMode` est donc passe a `static`, `ssr.entry` retire et
+`src/server.ts` supprime, avec `express` et `@types/express` de ses dependances. La sortie est un
+seul dossier `browser/`, servi depuis le reseau de bordure de Vercel.
+
+Le serveur de developpement (`npm start`) continue de construire un bundle serveur : c'est son
+fonctionnement normal pour rendre le SSR pendant l'edition, cela ne concerne pas la production.
+
 **`darkModeSelector` pointe sur `.parserag-dark`** et non sur le `system` par defaut : la page
 portera son propre theme sombre (#68), et deux signaux differents finiraient par se contredire a
 l'ecran.
