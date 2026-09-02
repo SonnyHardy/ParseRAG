@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<title>ParseRAG: PDF Parsing API for RAG</title>
+<meta name="description" content="Turn PDFs into clean, structured JSON and RAG-ready chunks with real reading order, table extraction, confidence scoring, and vision fallback.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="uploads/favicon-32.png" sizes="32x32">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<style>
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: #fbf9f4; -webkit-font-smoothing: antialiased; }
+  a { color: #8c2f26; text-decoration: none; }
+  a:hover { color: #6e241d; text-decoration: underline; text-underline-offset: 3px; }
+  ::selection { background: #efe1c8; }
+  /* motion gate: only hides pre-animation state once JS has confirmed it can animate */
+  html.pr-motion [data-fade="1"] { opacity: 0; }
+  [data-arrow] { transition: transform .28s cubic-bezier(.22,.7,.2,1); }
+  [data-cta]:hover [data-arrow] { transform: translateX(5px); }
+  @keyframes pr-caret { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</helmet>
+
+<div style="font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif; color:#1e1b16; background:#fbf9f4;">
+
+  <!-- ============ NAV ============ -->
+  <header style="position:sticky; top:0; z-index:50; background:#f4f1ea; border-bottom:1px solid #d2cabb;">
+    <nav style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:11px clamp(16px,4vw,32px); display:flex; align-items:center; flex-wrap:wrap; gap:8px 24px;">
+      <a href="#top" aria-label="ParseRAG home" style="display:flex; align-items:center; flex:none;">
+        <img src="assets/wordmark-ink.png" alt="ParseRAG" width="632" height="208" style="display:block; height:28px; width:auto; aspect-ratio:632/208; align-self:flex-start; flex:none;">
+      </a>
+      <div style="display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px 20px; margin-left:auto;">
+        <a href="#how" style="font-size:15px; font-weight:500; color:#3a3630; white-space:nowrap;" style-hover="color:#8c2f26">How it works</a>
+        <a href="#output" style="font-size:15px; font-weight:500; color:#3a3630; white-space:nowrap;" style-hover="color:#8c2f26">Output</a>
+        <a href="#start" style="font-size:15px; font-weight:500; color:#3a3630; white-space:nowrap;" style-hover="color:#8c2f26">Quick start</a>
+        <a href="https://rapidapi.com/parserag-parserag-default/api/parserag" target="_blank" rel="noopener" data-cta="1" style="display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 18px; background:#8c2f26; color:#fbf9f4; font-size:15px; font-weight:600; border-radius:4px; text-decoration:none; white-space:nowrap; transition:background .25s ease;" style-hover="background:#a3392e; color:#fbf9f4; text-decoration:none">Try on RapidAPI <span data-arrow="1" style="font-family:'JetBrains Mono',monospace;">&rarr;</span></a>
+      </div>
+    </nav>
+    <div style="height:2px; background:transparent;">
+      <div data-pr="progress" style="height:2px; width:0%; background:#8c2f26;"></div>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ============ HERO ============ -->
+    <section style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:80px 32px 64px;">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:24px; text-align:center; margin-bottom:64px;">
+        <div data-pr="hero-kicker" style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#8c2f26;">The preprocessing layer between PDFs and RAG</div>
+        <h1 data-pr="hero-title" style="margin:0; font-size:clamp(40px,6vw,74px); line-height:1.02; font-weight:600; letter-spacing:-.035em; max-width:18ch; text-wrap:balance;">Turn PDFs into RAG-ready data.</h1>
+        <p data-pr="hero-sub" style="margin:0; font-size:clamp(19px,2.2vw,24px); line-height:1.45; color:#3a3630; max-width:34ch;">PDF in. Structured JSON out. Clean reading order, structured tables, confidence on every chunk.</p>
+        <a href="https://rapidapi.com/parserag-parserag-default/api/parserag" target="_blank" rel="noopener" data-cta="1" data-pr="hero-cta" style="display:inline-flex; align-items:center; gap:10px; height:58px; padding:0 34px; background:#8c2f26; color:#fbf9f4; font-size:19px; font-weight:600; border-radius:4px; text-decoration:none; margin-top:6px; transition:background .25s ease;" style-hover="background:#a3392e; color:#fbf9f4; text-decoration:none">Try on RapidAPI <span data-arrow="1" style="font-family:'JetBrains Mono',monospace;">&rarr;</span></a>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#69645d; letter-spacing:.02em;">POST /api/v1/parse</div>
+      </div>
+
+      <!-- hero visual: PDF -> ParseRAG -> JSON, with a fragment-flight overlay -->
+      <div data-pr="hero" style="position:relative; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(272px,100%),1fr)); align-items:stretch; gap:14px;">
+        <div data-pr="hero-fx" aria-hidden="true" style="position:absolute; inset:0; z-index:5; pointer-events:none; overflow:visible;"></div>
+
+        <div data-pr="pdf-panel" style="box-sizing:border-box; border:1px solid #d2cabb; background:#f4f1ea; display:flex; flex-direction:column;">
+          <div style="padding:10px 16px; border-bottom:1px solid #d2cabb; font-family:'JetBrains Mono',monospace; font-size:12px; color:#69645d;">research-paper.pdf</div>
+          <div style="padding:20px 18px; display:flex; flex-direction:column; gap:11px; flex:1;">
+            <div data-pr="frag" data-label="metadata" style="height:8px; background:#c4baa6;"></div>
+            <div data-pr="frag" data-label="paragraph" style="display:flex; gap:12px;">
+              <div style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                <span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc; width:68%;"></span>
+              </div>
+              <div style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                <span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc; width:52%;"></span>
+              </div>
+            </div>
+            <div data-pr="frag" data-label="table" style="display:grid; grid-template-columns:repeat(3,1fr); gap:3px; border:1px solid #d2cabb; padding:5px;">
+              <span style="height:5px; background:#c4baa6;"></span><span style="height:5px; background:#c4baa6;"></span><span style="height:5px; background:#c4baa6;"></span>
+              <span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span>
+              <span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span>
+            </div>
+            <div data-pr="frag" data-label="paragraph" style="display:flex; gap:12px;">
+              <div style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                <span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc; width:74%;"></span>
+              </div>
+              <div style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                <span style="height:5px; background:#d5cdbc;"></span><span style="height:5px; background:#d5cdbc; width:58%;"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div data-pr="engine" style="position:relative; overflow:hidden; box-sizing:border-box; background:#1e1b16; display:flex; flex-direction:column; gap:12px;">
+          <div data-pr="scan" aria-hidden="true" style="position:absolute; left:0; right:0; top:0; height:2px; background:#d99b45; opacity:0;"></div>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid #37322a;">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:15px; color:#e8695a;">&rarr;</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#d99b45;">POST /api/v1/parse</span>
+          </div>
+          <div style="padding:6px 24px 26px; display:flex; flex-direction:column; gap:14px; flex:1; justify-content:center;">
+            <img src="assets/wordmark-paper.png" alt="ParseRAG" width="632" height="208" style="display:block; height:26px; width:auto; aspect-ratio:632/208; align-self:flex-start; flex:none;">
+            <div style="font-size:14px; line-height:1.5; color:#9a9186;">Column-aware extraction, verified against its own output.</div>
+          </div>
+        </div>
+
+        <div style="box-sizing:border-box; border:1px solid #d2cabb; background:#fbf9f4; display:flex; flex-direction:column;">
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid #d2cabb;">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:15px; color:#8c2f26;">&rarr;</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#69645d;">200 OK &middot; application/json</span>
+          </div>
+          <div style="padding:20px 18px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.75; flex:1;">
+            <div data-pr="json-line" data-fade="1" style="color:#69645d;">{</div>
+            <div data-pr="json-line" data-fade="1" style="padding-left:14px;"><span style="color:#3a3630;">"type"</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e;">"PARAGRAPH"</span><span style="color:#69645d;">,</span></div>
+            <div data-pr="json-line" data-fade="1" style="padding-left:14px;"><span style="color:#3a3630;">"page"</span><span style="color:#69645d;">: </span><span style="color:#1e1b16; font-weight:500;">1</span><span style="color:#69645d;">,</span></div>
+            <div data-pr="json-line" data-fade="1" style="padding-left:14px; margin:2px -18px; padding-right:18px; background:rgba(140,47,38,.1); box-shadow:inset 4px 0 0 #8c2f26;"><span style="padding-left:18px; color:#8c2f26; font-weight:700;">"confidence"</span><span style="color:#69645d;">: </span><span data-pr="hero-conf" style="color:#8c2f26; font-weight:700;">0.94</span></div>
+            <div data-pr="json-line" data-fade="1" style="color:#69645d;">}</div>
+          </div>
+        </div>
+      </div>
+
+      <div data-pr="ready" data-fade="1" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:14px; padding:14px 18px; background:#f4f1ea; border:1px solid #d2cabb;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:15px; color:#8c2f26;">&rarr;</span>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#8c2f26;">RAG-ready</span>
+        <span style="font-size:16px; color:#3a3630;">Embed the chunks. Skip the flagged ones.</span>
+        <button type="button" onClick="{{ replayHero }}" style="appearance:none; margin-left:auto; border:1px solid #d2cabb; background:#fbf9f4; color:#69645d; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; padding:7px 12px; cursor:pointer; border-radius:3px; transition:border-color .2s ease, color .2s ease;" style-hover="border-color:#8c2f26; color:#8c2f26">Replay</button>
+      </div>
+      <div style="margin-top:10px; font-family:'JetBrains Mono',monospace; font-size:13px; color:#69645d;">Built for RAG apps, document search, knowledge bases</div>
+    </section>
+
+    <!-- ============ API IN ONE REQUEST ============ -->
+    <section id="start" style="background:#1e1b16;">
+      <div style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:88px 32px;">
+        <h2 style="margin:0 0 36px; font-size:clamp(28px,3.4vw,42px); font-weight:600; letter-spacing:-.028em; line-height:1.08; color:#f7f4ee;">Parse a PDF in one request.</h2>
+
+        <div data-pr="code-section" style="display:flex; gap:24px; align-items:stretch; flex-wrap:wrap;">
+          <div style="flex:1 1 460px; min-width:0; border:1px solid #37322a; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0; border-bottom:1px solid #37322a; background:#15130f;">
+              <button type="button" onClick="{{ showCurl }}" style="appearance:none; border:0; background:transparent; padding:13px 20px 11px; font-family:'JetBrains Mono',monospace; font-size:14px; color:#9a9186; cursor:pointer; display:flex; flex-direction:column; gap:8px; align-items:center;" style-hover="color:#f4f1ea">
+                <sc-if value="{{ isCurl }}" hint-placeholder-val="{{ true }}"><span style="color:#f4f1ea; font-weight:700;">cURL</span></sc-if>
+                <sc-if value="{{ notCurl }}" hint-placeholder-val="{{ false }}"><span>cURL</span></sc-if>
+                <sc-if value="{{ isCurl }}" hint-placeholder-val="{{ true }}"><span style="display:block; width:100%; height:2px; background:#d99b45;"></span></sc-if>
+              </button>
+              <button type="button" onClick="{{ showPython }}" style="appearance:none; border:0; background:transparent; padding:13px 20px 11px; font-family:'JetBrains Mono',monospace; font-size:14px; color:#9a9186; cursor:pointer; display:flex; flex-direction:column; gap:8px; align-items:center;" style-hover="color:#f4f1ea">
+                <sc-if value="{{ isPython }}" hint-placeholder-val="{{ false }}"><span style="color:#f4f1ea; font-weight:700;">Python</span></sc-if>
+                <sc-if value="{{ notPython }}" hint-placeholder-val="{{ true }}"><span>Python</span></sc-if>
+                <sc-if value="{{ isPython }}" hint-placeholder-val="{{ false }}"><span style="display:block; width:100%; height:2px; background:#d99b45;"></span></sc-if>
+              </button>
+              <button type="button" onClick="{{ showJava }}" style="appearance:none; border:0; background:transparent; padding:13px 20px 11px; font-family:'JetBrains Mono',monospace; font-size:14px; color:#9a9186; cursor:pointer; display:flex; flex-direction:column; gap:8px; align-items:center;" style-hover="color:#f4f1ea">
+                <sc-if value="{{ isJava }}" hint-placeholder-val="{{ false }}"><span style="color:#f4f1ea; font-weight:700;">Java</span></sc-if>
+                <sc-if value="{{ notJava }}" hint-placeholder-val="{{ true }}"><span>Java</span></sc-if>
+                <sc-if value="{{ isJava }}" hint-placeholder-val="{{ false }}"><span style="display:block; width:100%; height:2px; background:#d99b45;"></span></sc-if>
+              </button>
+              <button type="button" onClick="{{ copyCode }}" aria-label="Copy code example" style="appearance:none; margin-left:auto; margin-right:14px; margin-bottom:8px; padding:7px 13px; background:#2b2721; border:1px solid #4a443b; color:#f4f1ea; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; border-radius:3px; display:flex; align-items:center; gap:8px; transition:background .2s ease, border-color .2s ease;" style-hover="background:#37322a; border-color:#6e675e">
+                <span>Copy</span>
+                <sc-if value="{{ copied }}" hint-placeholder-val="{{ false }}"><span style="color:#d99b45;">&#10003;</span></sc-if>
+              </button>
+            </div>
+
+            <sc-if value="{{ isCurl }}" hint-placeholder-val="{{ true }}">
+              <div style="overflow-x:auto; flex:1;">
+                <div style="min-width:min-content; padding:24px 26px; font-family:'JetBrains Mono',monospace; font-size:15px; line-height:1.85; white-space:pre;">
+                  <div data-pr="code-line"><span style="color:#d99b45;">curl</span><span style="color:#cfc7b8;"> -X POST \</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;">  </span><span style="color:#a3c39a;">https://parserag.p.rapidapi.com/api/v1/parse</span><span style="color:#cfc7b8;"> \</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;">  -H </span><span style="color:#a3c39a;">"X-RapidAPI-Key: YOUR_KEY"</span><span style="color:#cfc7b8;"> \</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;">  -F </span><span style="color:#a3c39a;">"file=@document.pdf"</span><span data-pr="caret" style="display:inline-block; width:8px; height:16px; margin-left:4px; vertical-align:-3px; background:#d99b45; animation:pr-caret 1s step-end infinite;"></span></div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isPython }}" hint-placeholder-val="{{ false }}">
+              <div style="overflow-x:auto; flex:1;">
+                <div style="min-width:min-content; padding:24px 26px; font-family:'JetBrains Mono',monospace; font-size:15px; line-height:1.85; white-space:pre;">
+                  <div data-pr="code-line"><span style="color:#e8695a;">import</span><span style="color:#cfc7b8;"> requests</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;"> </span></div>
+                  <div data-pr="code-line"><span style="color:#e8695a;">with </span><span style="color:#d99b45;">open</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"document.pdf"</span><span style="color:#9a9186;">, </span><span style="color:#a3c39a;">"rb"</span><span style="color:#9a9186;">) </span><span style="color:#e8695a;">as </span><span style="color:#cfc7b8;">f</span><span style="color:#9a9186;">:</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;">    r </span><span style="color:#9a9186;">= </span><span style="color:#cfc7b8;">requests</span><span style="color:#9a9186;">.</span><span style="color:#d99b45;">post</span><span style="color:#9a9186;">(</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">        </span><span style="color:#a3c39a;">"https://parserag.p.rapidapi.com/api/v1/parse"</span><span style="color:#9a9186;">,</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">        </span><span style="color:#cfc7b8;">headers</span><span style="color:#9a9186;">={</span><span style="color:#a3c39a;">"X-RapidAPI-Key"</span><span style="color:#9a9186;">: </span><span style="color:#a3c39a;">"YOUR_KEY"</span><span style="color:#9a9186;">},</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">        </span><span style="color:#cfc7b8;">files</span><span style="color:#9a9186;">={</span><span style="color:#a3c39a;">"file"</span><span style="color:#9a9186;">: </span><span style="color:#cfc7b8;">f</span><span style="color:#9a9186;">},</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    )</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;"> </span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;">chunks </span><span style="color:#9a9186;">= </span><span style="color:#cfc7b8;">r</span><span style="color:#9a9186;">.</span><span style="color:#d99b45;">json</span><span style="color:#9a9186;">()[</span><span style="color:#a3c39a;">"chunks"</span><span style="color:#9a9186;">]</span><span data-pr="caret" style="display:inline-block; width:8px; height:16px; margin-left:4px; vertical-align:-3px; background:#d99b45; animation:pr-caret 1s step-end infinite;"></span></div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isJava }}" hint-placeholder-val="{{ false }}">
+              <div style="overflow-x:auto; flex:1;">
+                <div style="min-width:min-content; padding:24px 26px; font-family:'JetBrains Mono',monospace; font-size:15px; line-height:1.85; white-space:pre;">
+                  <div data-pr="code-line"><span style="color:#d99b45;">RequestBody </span><span style="color:#cfc7b8;">body </span><span style="color:#9a9186;">= </span><span style="color:#e8695a;">new </span><span style="color:#d99b45;">MultipartBody.Builder</span><span style="color:#9a9186;">()</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">setType</span><span style="color:#9a9186;">(</span><span style="color:#cfc7b8;">MultipartBody.FORM</span><span style="color:#9a9186;">)</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">addFormDataPart</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"file"</span><span style="color:#9a9186;">, </span><span style="color:#a3c39a;">"document.pdf"</span><span style="color:#9a9186;">,</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">        </span><span style="color:#d99b45;">RequestBody</span><span style="color:#9a9186;">.</span><span style="color:#d99b45;">create</span><span style="color:#9a9186;">(</span><span style="color:#e8695a;">new </span><span style="color:#d99b45;">File</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"document.pdf"</span><span style="color:#9a9186;">),</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">            </span><span style="color:#d99b45;">MediaType</span><span style="color:#9a9186;">.</span><span style="color:#d99b45;">parse</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"application/pdf"</span><span style="color:#9a9186;">)))</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">build</span><span style="color:#9a9186;">();</span></div>
+                  <div data-pr="code-line"><span style="color:#cfc7b8;"> </span></div>
+                  <div data-pr="code-line"><span style="color:#d99b45;">Request </span><span style="color:#cfc7b8;">request </span><span style="color:#9a9186;">= </span><span style="color:#e8695a;">new </span><span style="color:#d99b45;">Request.Builder</span><span style="color:#9a9186;">()</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">url</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"https://parserag.p.rapidapi.com/api/v1/parse"</span><span style="color:#9a9186;">)</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">post</span><span style="color:#9a9186;">(</span><span style="color:#cfc7b8;">body</span><span style="color:#9a9186;">)</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">addHeader</span><span style="color:#9a9186;">(</span><span style="color:#a3c39a;">"X-RapidAPI-Key"</span><span style="color:#9a9186;">, </span><span style="color:#a3c39a;">"YOUR_KEY"</span><span style="color:#9a9186;">)</span></div>
+                  <div data-pr="code-line"><span style="color:#9a9186;">    .</span><span style="color:#d99b45;">build</span><span style="color:#9a9186;">();</span><span data-pr="caret" style="display:inline-block; width:8px; height:16px; margin-left:4px; vertical-align:-3px; background:#d99b45; animation:pr-caret 1s step-end infinite;"></span></div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="flex:1 1 340px; min-width:0; border:1px solid #37322a; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; gap:12px; padding:13px 20px; background:#15130f; border-bottom:1px solid #37322a; font-family:'JetBrains Mono',monospace; font-size:14px; color:#9a9186;">
+              <span>Response</span>
+              <span data-pr="req-state" style="opacity:0; display:inline-flex; align-items:center; gap:7px; font-size:12px; color:#d99b45;"><span style="width:6px; height:6px; border-radius:50%; background:#d99b45; display:inline-block;"></span>request sent</span>
+              <span data-pr="status-pill" style="margin-left:auto; display:inline-flex; align-items:center; gap:8px; padding:3px 9px; border:1px solid #4a443b; border-radius:3px; font-size:12px; color:#a3c39a;">200 OK <span style="color:#69645d;">1.84s</span></span>
+            </div>
+            <div style="overflow-x:auto; flex:1;">
+              <div style="min-width:min-content; padding:24px 26px; font-family:'JetBrains Mono',monospace; font-size:15px; line-height:1.85; white-space:pre;">
+                <div data-pr="resp-line"><span style="color:#9a9186;">{</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">  </span><span style="color:#cfc7b8;">"status"</span><span style="color:#9a9186;">: </span><span style="color:#a3c39a;">"ok"</span><span style="color:#9a9186;">,</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">  </span><span style="color:#cfc7b8;">"chunks"</span><span style="color:#9a9186;">: [</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">    {</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">      </span><span style="color:#cfc7b8;">"type"</span><span style="color:#9a9186;">: </span><span style="color:#a3c39a;">"PARAGRAPH"</span><span style="color:#9a9186;">,</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">      </span><span style="color:#cfc7b8;">"page"</span><span style="color:#9a9186;">: </span><span style="color:#f4f1ea;">1</span><span style="color:#9a9186;">,</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">      </span><span style="color:#e8695a; font-weight:700;">"confidence"</span><span style="color:#9a9186;">: </span><span style="color:#e8695a; font-weight:700;">0.94</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">    }</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">  ]</span></div>
+                <div data-pr="resp-line"><span style="color:#9a9186;">}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap; margin-top:32px;">
+          <a href="https://rapidapi.com/parserag-parserag-default/api/parserag" target="_blank" rel="noopener" data-cta="1" style="display:inline-flex; align-items:center; gap:10px; height:52px; padding:0 28px; background:#8c2f26; color:#fbf9f4; font-size:18px; font-weight:600; border-radius:4px; text-decoration:none; transition:background .25s ease;" style-hover="background:#a3392e; color:#fbf9f4; text-decoration:none">Try it on RapidAPI <span data-arrow="1" style="font-family:'JetBrains Mono',monospace;">&rarr;</span></a>
+          <span style="font-size:16px; color:#9a9186;">Your RapidAPI key is the only credential.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THE PROBLEM / READING ORDER ============ -->
+    <section id="problem" data-pr="order-section" style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:96px 32px;">
+      <div style="display:flex; flex-direction:column; gap:14px; max-width:52ch; margin-bottom:28px;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#8c2f26;">The problem</div>
+        <h2 style="margin:0; font-size:clamp(30px,3.8vw,48px); font-weight:600; letter-spacing:-.03em; line-height:1.06;">PDF extraction is quietly wrong.</h2>
+        <p style="margin:0; font-size:19px; line-height:1.55; color:#3a3630;">Two columns. One page. Two completely different reading orders.</p>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; margin-bottom:16px; font-family:'JetBrains Mono',monospace; font-size:13px; color:#69645d;">
+        <span data-pr="legend-1" style="display:inline-flex; align-items:center; gap:9px;"><span style="width:16px; height:6px; background:#8c2f26;"></span>column 1</span>
+        <span data-pr="legend-2" style="display:inline-flex; align-items:center; gap:9px;"><span style="width:16px; height:6px; background:#a8752c;"></span>column 2</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); gap:24px;">
+        <div style="box-sizing:border-box; border:1px solid #d2cabb; background:#f4f1ea; display:flex; flex-direction:column;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-bottom:1px solid #d2cabb;">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:#3a3630;">Plain extraction</span>
+            <span data-pr="badge-wrong" data-fade="1" style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#8c2f26; font-weight:700; border:1px solid #8c2f26; padding:3px 8px;">wrong order</span>
+          </div>
+          <div style="padding:20px 18px; display:flex; flex-direction:column; gap:5px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.4;">
+            <div data-pr="bad-row" data-col="1" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#8c2f26;">Retrieval-augmented generation grounds a</span></div>
+            <div data-pr="bad-row" data-col="2" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#8a5c1e;">evaluated separately from generation. We</span></div>
+            <div data-pr="bad-row" data-col="1" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#8c2f26;">language model in an external corpus so</span></div>
+            <div data-pr="bad-row" data-col="2" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#8a5c1e;">report recall at k for three chunking</span></div>
+            <div data-pr="bad-row" data-col="1" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#8c2f26;">that factual claims can be traced to a</span></div>
+            <div data-pr="bad-row" data-col="2" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#8a5c1e;">strategies and find that boundary quality</span></div>
+          </div>
+          <div style="margin-top:auto; padding:12px 18px; border-top:1px solid #d2cabb; font-size:15px; line-height:1.5; color:#69645d;">Every chunk mixes two unrelated sentences.</div>
+        </div>
+
+        <div style="box-sizing:border-box; border:1px solid #1e1b16; background:#fbf9f4; display:flex; flex-direction:column;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; background:#1e1b16;">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:#f4f1ea;">ParseRAG</span>
+            <span data-pr="badge-right" data-fade="1" style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#d99b45; font-weight:700; border:1px solid #a8752c; padding:3px 8px;">in order</span>
+          </div>
+          <div data-pr="good-list" style="padding:20px 18px; display:flex; flex-direction:column; gap:5px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.4;">
+            <div data-pr="good-row" data-slot="0" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#3a3630;">Retrieval-augmented generation grounds a</span></div>
+            <div data-pr="good-row" data-slot="1" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#3a3630;">language model in an external corpus so</span></div>
+            <div data-pr="good-row" data-slot="2" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#8c2f26; flex:none;"></span><span style="color:#3a3630;">that factual claims can be traced to a</span></div>
+            <div data-pr="good-row" data-slot="3" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#3a3630;">evaluated separately from generation. We</span></div>
+            <div data-pr="good-row" data-slot="4" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#3a3630;">report recall at k for three chunking</span></div>
+            <div data-pr="good-row" data-slot="5" style="display:flex; gap:10px; padding:2px 4px; margin:0 -4px;"><span style="width:4px; background:#a8752c; flex:none;"></span><span style="color:#3a3630;">strategies and find that boundary quality</span></div>
+          </div>
+          <div style="margin-top:auto; padding:12px 18px; border-top:1px solid #d2cabb; font-size:15px; line-height:1.5; color:#69645d;">One column read fully, then the next.</div>
+        </div>
+      </div>
+
+      <p style="margin:32px 0 0; font-size:19px; line-height:1.55; color:#3a3630; max-width:60ch;">Parsing a PDF is not the same as understanding its reading order.</p>
+    </section>
+
+    <!-- ============ WHY IT MATTERS ============ -->
+    <section style="background:#f4f1ea; border-top:1px solid #d2cabb; border-bottom:1px solid #d2cabb;">
+      <div style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:88px 32px;">
+        <h2 style="margin:0 0 40px; font-size:clamp(28px,3.4vw,44px); font-weight:600; letter-spacing:-.03em; line-height:1.06; max-width:24ch;">Bad extraction becomes bad retrieval.</h2>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); gap:20px; margin-bottom:32px;">
+          <div style="box-sizing:border-box; border:1px solid #d2cabb; background:#fbf9f4; display:flex; flex-direction:column;">
+            <div style="padding:12px 20px; border-bottom:1px solid #d2cabb; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#8c2f26;">Broken extraction</div>
+            <div style="padding:22px 20px; display:flex; flex-direction:column; gap:10px; font-family:'JetBrains Mono',monospace; font-size:16px; color:#8c2f26;">
+              <div>interleaved text</div>
+              <div style="color:#8c2f26;">&darr;</div>
+              <div>noisy chunks</div>
+              <div style="color:#8c2f26;">&darr;</div>
+              <div>polluted embeddings</div>
+              <div style="color:#8c2f26;">&darr;</div>
+              <div style="font-weight:700;">wrong answers</div>
+            </div>
+          </div>
+          <div style="box-sizing:border-box; border:1px solid #1e1b16; background:#fbf9f4; display:flex; flex-direction:column;">
+            <div style="padding:12px 20px; background:#1e1b16; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#d99b45;">ParseRAG extraction</div>
+            <div style="padding:22px 20px; display:flex; flex-direction:column; gap:10px; font-family:'JetBrains Mono',monospace; font-size:16px; color:#1e1b16;">
+              <div>real reading order</div>
+              <div style="color:#a8752c;">&darr;</div>
+              <div>clean chunks</div>
+              <div style="color:#a8752c;">&darr;</div>
+              <div>faithful embeddings</div>
+              <div style="color:#a8752c;">&darr;</div>
+              <div style="font-weight:700;">answers you can cite</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:36px; align-items:baseline; flex-wrap:wrap;">
+          <p style="margin:0; font-size:clamp(22px,2.6vw,32px); font-weight:500; letter-spacing:-.018em; line-height:1.25;">Bad chunks in. Bad context out.</p>
+          <p style="margin:0; font-size:17px; line-height:1.55; color:#69645d; max-width:38ch;">Your RAG system can only retrieve what you give it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS: sticky scroll story ============ -->
+    <section id="how" style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:96px 32px 40px;">
+      <div style="display:flex; flex-direction:column; gap:14px; max-width:52ch; margin-bottom:40px;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#8c2f26;">How it works</div>
+        <h2 style="margin:0; font-size:clamp(30px,3.8vw,48px); font-weight:600; letter-spacing:-.03em; line-height:1.06;">From PDF to RAG-ready chunks.</h2>
+        <p style="margin:0; font-size:19px; line-height:1.55; color:#3a3630;">One request. Five stages. Scroll to follow the document through.</p>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(400px,100%),1fr)); gap:32px; align-items:start;">
+
+        <div style="position:sticky; top:96px;">
+          <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:0;">
+            <sc-for list="{{ stages }}" as="s" hint-placeholder-count="5">
+              <sc-if value="{{ s.isActive }}" hint-placeholder-val="{{ false }}">
+                <button type="button" onClick="{{ s.pick }}" aria-pressed="true" style="appearance:none; cursor:pointer; flex:1 1 76px; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:11px 12px; border:1px solid #1e1b16; background:#1e1b16; color:#f4f1ea; font-family:inherit; text-align:left;">
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; color:#d99b45;">{{ s.num }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; letter-spacing:.04em;">{{ s.label }}</span>
+                </button>
+              </sc-if>
+              <sc-if value="{{ s.notActive }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ s.pick }}" onMouseEnter="{{ s.pick }}" aria-pressed="false" style="appearance:none; cursor:pointer; flex:1 1 76px; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:11px 12px; border:1px solid #d2cabb; background:#f4f1ea; color:#3a3630; font-family:inherit; text-align:left; transition:border-color .2s ease, background .2s ease;" style-hover="border-color:#8c2f26; background:#efe9dc">
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; color:#8c2f26;">{{ s.num }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; letter-spacing:.04em;">{{ s.label }}</span>
+                </button>
+              </sc-if>
+            </sc-for>
+          </div>
+
+          <div style="border:1px solid #1e1b16; border-top:0; background:#f4f1ea;">
+            <div style="padding:16px 20px; border-bottom:1px solid #d2cabb; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <span style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#8c2f26;">{{ activeMeta }}</span>
+              <span style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:12px; color:#69645d;">stage {{ activeNum }} / 05</span>
+            </div>
+            <div style="padding:22px 22px 0;">
+              <div data-pr="doc" style="position:relative; box-sizing:border-box; height:186px; border:1px solid #d2cabb; background:#fbf9f4; padding:14px 16px; display:flex; flex-direction:column; gap:8px; overflow:hidden;">
+                <div data-pr="doc-art" style="height:5px; background:#d5cdbc; width:52%;"></div>
+                <div data-pr="doc-title" style="height:8px; background:#c4baa6; width:74%;"></div>
+                <div style="display:flex; gap:14px; flex:1;">
+                  <div data-pr="doc-col" style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc; width:66%;"></span>
+                  </div>
+                  <div data-pr="doc-col" style="flex:1; display:flex; flex-direction:column; gap:5px;">
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc;"></span>
+                    <span data-pr="doc-line" style="height:5px; background:#d5cdbc; width:54%;"></span>
+                  </div>
+                </div>
+                <div data-pr="doc-table" style="display:grid; grid-template-columns:repeat(3,1fr); gap:3px; border:1px solid #d2cabb; padding:4px;">
+                  <span style="height:5px; background:#c4baa6;"></span><span style="height:5px; background:#c4baa6;"></span><span style="height:5px; background:#c4baa6;"></span>
+                  <span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span><span style="height:5px; background:#e0d8c7;"></span>
+                </div>
+                <div data-pr="doc-art" style="height:5px; background:#d5cdbc; width:38%;"></div>
+
+                <div data-pr="doc-check" aria-hidden="true" style="opacity:0; position:absolute; right:12px; top:10px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:#8c2f26; border:1px solid #8c2f26; padding:3px 7px; background:#fbf9f4;">accepted</div>
+                <div data-pr="doc-band" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:28px; height:14px; border:1px solid #8c2f26;"></div>
+                <div data-pr="doc-band" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:48px; height:66px; border:1px solid #8c2f26;"></div>
+                <div data-pr="doc-band" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:120px; height:30px; border:1px solid #a8752c;"></div>
+                <div data-pr="doc-chunk" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:26px; height:44px; border:1px solid #1e1b16; background:rgba(30,27,22,.05); display:flex; align-items:flex-end; justify-content:flex-end; padding:3px 5px; font-family:'JetBrains Mono',monospace; font-size:9px; color:#3a3630;">chunk_000</div>
+                <div data-pr="doc-chunk" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:74px; height:40px; border:1px solid #1e1b16; background:rgba(30,27,22,.05); display:flex; align-items:flex-end; justify-content:flex-end; padding:3px 5px; font-family:'JetBrains Mono',monospace; font-size:9px; color:#3a3630;">chunk_001</div>
+                <div data-pr="doc-chunk" aria-hidden="true" style="opacity:0; position:absolute; left:10px; right:10px; top:118px; height:32px; border:1px solid #8c2f26; background:rgba(140,47,38,.05); display:flex; align-items:flex-end; justify-content:flex-end; padding:3px 5px; font-family:'JetBrains Mono',monospace; font-size:9px; color:#8c2f26;">chunk_002 &middot; TABLE</div>
+                <div data-pr="doc-json" aria-hidden="true" style="opacity:0; position:absolute; inset:0; background:#1e1b16; padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:11px; line-height:1.7; color:#cfc7b8;">
+                  <div>{</div>
+                  <div style="padding-left:12px;"><span style="color:#9a9186;">"pages"</span>: <span style="color:#f4f1ea;">12</span>,</div>
+                  <div style="padding-left:12px;"><span style="color:#9a9186;">"chunks"</span>: [ <span style="color:#f4f1ea;">47</span> ],</div>
+                  <div style="padding-left:12px;"><span style="color:#e8695a;">"confidence"</span>: <span style="color:#e8695a;">0.94</span></div>
+                  <div>}</div>
+                </div>
+              </div>
+            </div>
+            <div data-pr="stage-rows" style="padding:22px 22px 26px; min-height:150px; display:flex; flex-direction:column; gap:8px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.65;">
+              <sc-for list="{{ activeRows }}" as="row" hint-placeholder-count="4">
+                <sc-if value="{{ row.isNormal }}" hint-placeholder-val="{{ true }}">
+                  <div data-pr="stage-row" style="display:flex; align-items:center; gap:10px; color:#3a3630;">
+                    <span style="flex:none; width:4px; height:4px; background:#a8752c;"></span>
+                    <span>{{ row.text }}</span>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.isMuted }}" hint-placeholder-val="{{ false }}">
+                  <div data-pr="stage-row" style="display:flex; align-items:center; gap:10px; color:#6f675c; text-decoration:line-through; text-decoration-color:#8c2f26;">
+                    <span style="flex:none; width:4px; height:4px; background:#c4baa6;"></span>
+                    <span>{{ row.text }}</span>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.isResult }}" hint-placeholder-val="{{ false }}">
+                  <div data-pr="stage-row" style="display:flex; align-items:center; gap:10px; margin-top:5px; padding-top:11px; border-top:1px solid #d2cabb; color:#8c2f26; font-weight:700;">
+                    <span style="flex:none; width:4px; height:4px; background:#8c2f26;"></span>
+                    <span>{{ row.text }}</span>
+                  </div>
+                </sc-if>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column;">
+          <sc-for list="{{ stages }}" as="s" hint-placeholder-count="5">
+            <sc-if value="{{ s.isActive }}" hint-placeholder-val="{{ false }}">
+              <div data-pr="stage-block" data-idx="{{ s.idx }}" style="box-sizing:border-box; min-height:60vh; display:flex; flex-direction:column; justify-content:center; gap:14px; padding:36px 0 36px 26px; border-left:2px solid #8c2f26;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#8c2f26;">{{ s.num }} &mdash; {{ s.label }}</div>
+                <div style="font-size:clamp(24px,2.6vw,32px); font-weight:600; letter-spacing:-.02em; line-height:1.16; max-width:26ch;">{{ s.title }}</div>
+                <p style="margin:0; font-size:18px; line-height:1.55; color:#3a3630; max-width:42ch;">{{ s.body }}</p>
+              </div>
+            </sc-if>
+            <sc-if value="{{ s.notActive }}" hint-placeholder-val="{{ true }}">
+              <div data-pr="stage-block" data-idx="{{ s.idx }}" style="box-sizing:border-box; min-height:60vh; display:flex; flex-direction:column; justify-content:center; gap:14px; padding:36px 0 36px 26px; border-left:2px solid #e2dbcb;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#a49b8c;">{{ s.num }} &mdash; {{ s.label }}</div>
+                <div style="font-size:clamp(24px,2.6vw,32px); font-weight:600; letter-spacing:-.02em; line-height:1.16; max-width:26ch; color:#8b8377;">{{ s.title }}</div>
+                <p style="margin:0; font-size:18px; line-height:1.55; color:#9a9186; max-width:42ch;">{{ s.body }}</p>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THE SECOND PASS ============ -->
+    <section data-pr="second-pass" style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:56px 32px 96px;">
+      <div style="border:1px solid #d2cabb; background:#f4f1ea;">
+        <div style="padding:14px 22px; border-bottom:1px solid #d2cabb; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#8c2f26;">The second pass</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(330px,100%),1fr)); gap:0;">
+          <div style="box-sizing:border-box; padding:32px 26px; display:flex; flex-direction:column; gap:22px;">
+            <p style="margin:0; font-size:18px; line-height:1.55; color:#3a3630; max-width:42ch;">After assembling a page, the parser reads its own output back. If it finds the statistical signature of interleaved columns, the result is thrown away and the page is reassembled with different column splits.</p>
+            <div style="display:flex; flex-direction:column; gap:9px; font-family:'JetBrains Mono',monospace; font-size:13px;">
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#3a3630;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>page assembled</div>
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#3a3630;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>quality check</div>
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#8c2f26;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>order signal detected</div>
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#8c2f26;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>result rejected</div>
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#3a3630;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>page reassembled</div>
+              <div data-pr="sp-step" data-fade="1" style="display:flex; align-items:center; gap:11px; color:#1e1b16; font-weight:700;"><span data-pr="sp-dot" style="flex:none; width:7px; height:7px; background:#c4baa6;"></span>validated</div>
+            </div>
+          </div>
+          <div style="box-sizing:border-box; border-left:1px solid #d2cabb; background:#fbf9f4; padding:32px 26px; display:flex; flex-direction:column; gap:24px; justify-content:center;">
+            <div data-pr="sp-stack" style="display:flex; flex-direction:column; gap:7px;">
+              <div data-pr="sp-frag" data-slot="0" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#8c2f26; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc;"></span></div>
+              <div data-pr="sp-frag" data-slot="1" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#8c2f26; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc;"></span></div>
+              <div data-pr="sp-frag" data-slot="2" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#8c2f26; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc; width:72%;"></span></div>
+              <div data-pr="sp-frag" data-slot="3" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#a8752c; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc;"></span></div>
+              <div data-pr="sp-frag" data-slot="4" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#a8752c; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc;"></span></div>
+              <div data-pr="sp-frag" data-slot="5" style="display:flex; gap:9px; align-items:center;"><span style="width:4px; height:14px; background:#a8752c; flex:none;"></span><span style="flex:1; height:7px; background:#d5cdbc; width:58%;"></span></div>
+            </div>
+            <p data-pr="sp-quote" style="margin:0; font-size:clamp(21px,2.4vw,28px); font-weight:500; letter-spacing:-.018em; line-height:1.22; max-width:20ch;">Geometry proposes. Reading order disposes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ OUTPUT / CONFIDENCE ============ -->
+    <section id="output" data-pr="output-section" style="background:#f4f1ea; border-top:1px solid #d2cabb; border-bottom:1px solid #d2cabb;">
+      <div style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:96px 32px;">
+        <div style="display:flex; flex-direction:column; gap:14px; max-width:52ch; margin-bottom:40px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#8c2f26;">The output</div>
+          <h2 style="margin:0; font-size:clamp(30px,3.8vw,48px); font-weight:600; letter-spacing:-.03em; line-height:1.06;">Every chunk tells you how much to trust it.</h2>
+          <p style="margin:0; font-size:19px; line-height:1.55; color:#3a3630;">Uncertain content is flagged instead of silently indexed.</p>
+        </div>
+
+        <div style="display:flex; gap:32px; align-items:flex-start; flex-wrap:wrap;">
+          <div style="flex:1 1 500px; min-width:0; border:1px solid #1e1b16; background:#fbf9f4;">
+            <div style="display:flex; align-items:center; gap:14px; padding:12px 20px; background:#1e1b16;">
+              <span style="font-family:'JetBrains Mono',monospace; font-size:14px; color:#f4f1ea;">POST /api/v1/parse</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#9a9186; margin-left:auto;">200 OK</span>
+            </div>
+            <div style="overflow-x:auto;">
+              <div style="min-width:min-content; padding:24px 26px; font-family:'JetBrains Mono',monospace; font-size:15px; line-height:1.8;">
+                <div style="color:#69645d;">{</div>
+                <div style="padding-left:18px;"><span style="color:#3a3630;">"document_id"</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e;">"doc_9f3c1a7b"</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:18px;"><span style="color:#3a3630;">"pages"</span><span style="color:#69645d;">: </span><span style="color:#1e1b16; font-weight:500;">12</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:18px;"><span style="color:#3a3630;">"processing_ms"</span><span style="color:#69645d;">: </span><span style="color:#1e1b16; font-weight:500;">1843</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:18px;"><span style="color:#3a3630;">"chunks"</span><span style="color:#69645d;">: [</span></div>
+                <div style="padding-left:36px; color:#69645d;">{</div>
+                <div style="padding-left:54px;"><span style="color:#3a3630;">"text"</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e;">"Retrieval-augmented generation..."</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:54px;"><span style="color:#3a3630;">"type"</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e;">"PARAGRAPH"</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:54px;"><span style="color:#3a3630;">"page"</span><span style="color:#69645d;">: </span><span style="color:#1e1b16; font-weight:500;">1</span><span style="color:#69645d;">,</span></div>
+                <div data-pr="json-conf-row" style="padding-left:54px; background:rgba(140,47,38,.1); margin:3px -26px; padding-right:26px; box-shadow:inset 4px 0 0 #8c2f26;"><span style="padding-left:26px; color:#8c2f26; font-weight:700;">"confidence"</span><span style="color:#69645d;">: </span><span data-pr="conf-hi" style="color:#8c2f26; font-weight:700; font-size:17px;">0.94</span><span style="color:#69645d;">,</span></div>
+                <div style="padding-left:54px;"><span style="color:#3a3630;">"fallback_used"</span><span style="color:#69645d;">: </span><span style="color:#1e1b16; font-weight:500;">false</span><span style="color:#69645d;">,</span></div>
+                <div data-pr="json-flag-row" style="padding-left:54px; background:rgba(47,74,110,.1); margin:3px -26px; padding-right:26px; box-shadow:inset 4px 0 0 #2f4a6e;"><span style="padding-left:26px; color:#2f4a6e; font-weight:700;">"manual_review_needed"</span><span style="color:#69645d;">: </span><span data-pr="flag-hi" data-fade="1" style="color:#2f4a6e; font-weight:700;">false</span></div>
+                <div style="padding-left:36px; color:#69645d;">}</div>
+                <div style="padding-left:18px; color:#69645d;">]</div>
+                <div style="color:#69645d;">}</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex:1 1 280px; min-width:0; display:flex; flex-direction:column; gap:22px;">
+            <div data-pr="label-conf" style="border-top:2px solid #8c2f26; padding-top:14px;">
+              <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:6px;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:#8c2f26;">confidence</div>
+                <div data-pr="conf-num" style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700; color:#8c2f26;">0.94</div>
+              </div>
+              <p style="margin:0 0 10px; font-size:17px; line-height:1.5; color:#3a3630;">Resolved per chunk, 0 to 1.</p>
+              <div style="height:8px; background:#e2dbcb; overflow:hidden;">
+                <div data-pr="conf-bar" style="height:8px; width:94%; background:#8c2f26;"></div>
+              </div>
+              <div data-pr="safe-tag" style="margin-top:10px; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#2f4a6e;">safe to index</div>
+            </div>
+
+            <div data-pr="label-flag" style="border-top:2px solid #2f4a6e; padding-top:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:#2f4a6e; margin-bottom:6px;">manual_review_needed</div>
+              <p style="margin:0 0 14px; font-size:17px; line-height:1.5; color:#3a3630;">The field to filter on.</p>
+              <div style="border:1px solid #d2cabb; background:#fbf9f4; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; align-items:baseline; gap:10px; font-family:'JetBrains Mono',monospace; font-size:14px; color:#3a3630;">
+                  <span>chunk_003</span>
+                  <span data-pr="conf-num-low" style="margin-left:auto; font-weight:700; color:#8c2f26;">0.41</span>
+                </div>
+                <div style="height:6px; background:#e2dbcb; overflow:hidden;">
+                  <div data-pr="conf-bar-low" style="height:6px; width:41%; background:#8c2f26;"></div>
+                </div>
+                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-family:'JetBrains Mono',monospace; font-size:13px;">
+                  <span style="color:#3a3630;">manual_review_needed: <span data-pr="flag-low" data-fade="1" style="color:#8c2f26; font-weight:700;">true</span></span>
+                  <span data-pr="route-arrow" data-fade="1" style="color:#8c2f26;">&rarr;</span>
+                  <span data-pr="route-box" data-fade="1" style="border:1px solid #8c2f26; color:#8c2f26; letter-spacing:.1em; text-transform:uppercase; padding:4px 9px; font-size:11px; font-weight:700;">manual review</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="border-top:1px solid #d2cabb; padding-top:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:500; margin-bottom:6px;">table_json</div>
+              <p style="margin:0; font-size:17px; line-height:1.5; color:#3a3630;">Headers and rows, on <span style="font-family:'JetBrains Mono',monospace; font-size:15px;">TABLE</span> chunks.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EDGE CASES ============ -->
+    <section id="edge" data-pr="edge-section" style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:96px 32px;">
+      <div style="display:flex; flex-direction:column; gap:14px; max-width:52ch; margin-bottom:40px;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#8c2f26;">Edge cases</div>
+        <h2 style="margin:0; font-size:clamp(30px,3.8vw,48px); font-weight:600; letter-spacing:-.03em; line-height:1.06;">Built for the PDFs that break parsers.</h2>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(500px,100%),1fr)); gap:16px; margin-bottom:44px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr)); gap:16px;">
+          <div data-pr="card-scan" style="box-sizing:border-box; border:1px solid #d2cabb; background:#f4f1ea; padding:22px; display:flex; flex-direction:column; gap:16px;">
+            <div style="position:relative; overflow:hidden; height:48px; background:#dcd3c1; border:1px dashed #b3a892; display:flex; flex-direction:column; justify-content:center; gap:5px; padding:0 10px;">
+              <span data-pr="ocr-line" data-fade="1" style="height:4px; background:#8a8172;"></span>
+              <span data-pr="ocr-line" data-fade="1" style="height:4px; background:#8a8172;"></span>
+              <span data-pr="ocr-line" data-fade="1" style="height:4px; background:#8a8172; width:62%;"></span>
+              <span data-pr="det-box" aria-hidden="true" style="opacity:0; position:absolute; left:8px; right:8px; top:11px; height:8px; border:1px solid #8c2f26;"></span>
+              <span data-pr="det-box" aria-hidden="true" style="opacity:0; position:absolute; left:8px; right:8px; top:22px; height:8px; border:1px solid #8c2f26;"></span>
+              <span data-pr="det-box" aria-hidden="true" style="opacity:0; position:absolute; left:8px; right:44%; top:33px; height:8px; border:1px solid #8c2f26;"></span>
+              <span data-pr="scan-sweep" aria-hidden="true" style="position:absolute; left:0; right:0; top:0; height:2px; background:#8c2f26; opacity:0;"></span>
+            </div>
+            <div style="font-size:19px; font-weight:600; letter-spacing:-.01em;">Scanned pages</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:14px;"><span style="color:#3a3630;">fallback_used</span><span style="color:#69645d;">: </span><span style="color:#8c2f26; font-weight:700;">true</span></div>
+          </div>
+
+          <div data-pr="card-table" style="box-sizing:border-box; border:1px solid #d2cabb; background:#f4f1ea; padding:22px; display:flex; flex-direction:column; gap:16px;">
+            <div style="position:relative; height:48px;">
+              <div data-pr="tbl-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:4px; align-content:center; height:48px;">
+                <span data-pr="cell" style="height:6px; background:#a8752c;"></span><span data-pr="cell" style="height:6px; background:#a8752c;"></span><span data-pr="cell" style="height:6px; background:#a8752c;"></span>
+                <span data-pr="cell" style="height:6px; background:#d5cdbc;"></span><span data-pr="cell" style="height:6px; background:#d5cdbc;"></span><span data-pr="cell" style="height:6px; background:#d5cdbc;"></span>
+                <span data-pr="cell" style="height:6px; background:#d5cdbc;"></span><span data-pr="cell" style="height:6px; background:#d5cdbc;"></span><span data-pr="cell" style="height:6px; background:#d5cdbc;"></span>
+              </div>
+              <div data-pr="tbl-json" style="opacity:0; position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; gap:3px; font-family:'JetBrains Mono',monospace; font-size:12px; color:#8a5c1e; background:#f4f1ea;">
+                <span>"headers": [ ... ]</span>
+                <span>"rows": [ [ ... ], ... ]</span>
+              </div>
+            </div>
+            <div style="font-size:19px; font-weight:600; letter-spacing:-.01em;">Borderless tables</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:14px;"><span style="color:#3a3630;">type</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e; font-weight:700;">"TABLE"</span></div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr)); gap:16px;">
+          <div style="box-sizing:border-box; border:1px solid #d2cabb; background:#f4f1ea; padding:22px; display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; flex-direction:column; justify-content:center; gap:7px; height:48px;">
+              <span data-pr="strike" style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#6f675c; text-decoration:line-through; text-decoration-color:#8c2f26; text-decoration-thickness:2px;">J. Retrieval Systems, Vol. 12</span>
+              <span data-pr="strike" style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#6f675c; text-decoration:line-through; text-decoration-color:#8c2f26; text-decoration-thickness:2px;">doi:10.0000/jrs.2024.0312</span>
+            </div>
+            <div style="font-size:19px; font-weight:600; letter-spacing:-.01em;">Repeated headers</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:14px;"><span style="color:#3a3630;">type</span><span style="color:#69645d;">: </span><span style="color:#8a5c1e; font-weight:700;">"HEADER_ARTIFACT"</span></div>
+          </div>
+
+          <div style="box-sizing:border-box; border:1px solid #8c2f26; background:#f3e3e1; padding:22px; display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; align-items:flex-end; gap:5px; height:48px;">
+              <span data-pr="bar" style="flex:1; height:78%; background:#d8b0aa;"></span><span data-pr="bar" style="flex:1; height:92%; background:#d8b0aa;"></span><span data-pr="bar" style="flex:1; height:34%; background:#8c2f26;"></span><span data-pr="bar" style="flex:1; height:85%; background:#d8b0aa;"></span><span data-pr="bar" style="flex:1; height:70%; background:#d8b0aa;"></span>
+            </div>
+            <div style="font-size:19px; font-weight:600; letter-spacing:-.01em;">Low confidence</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:14px;"><span style="color:#3a3630;">manual_review_needed</span><span style="color:#69645d;">: </span><span style="color:#8c2f26; font-weight:700;">true</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:34px 36px; background:#1e1b16;">
+        <p style="margin:0; font-size:clamp(24px,3vw,38px); font-weight:500; letter-spacing:-.022em; line-height:1.2; color:#f7f4ee; max-width:34ch; text-wrap:balance;">Silent failures poison indexes. Honest flags protect them.</p>
+      </div>
+    </section>
+
+    <!-- ============ RAPIDAPI CTA ============ -->
+    <section id="rapidapi" style="background:#1e1b16;">
+      <div style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:104px 32px; display:flex; flex-direction:column; align-items:flex-start; gap:26px;">
+        <img src="assets/wordmark-paper.png" alt="ParseRAG" width="632" height="208" loading="lazy" style="display:block; height:36px; width:auto; aspect-ratio:632/208; align-self:flex-start; flex:none;">
+        <h2 style="margin:0; font-size:clamp(32px,4.6vw,58px); font-weight:600; letter-spacing:-.032em; line-height:1.04; color:#f7f4ee; max-width:22ch; text-wrap:balance;">Give your RAG pipeline cleaner input.</h2>
+        <p style="margin:0; font-size:20px; line-height:1.55; color:#cfc7b8; max-width:44ch;">Subscribe on RapidAPI, grab your key, send your first PDF.</p>
+        <a href="https://rapidapi.com/parserag-parserag-default/api/parserag" target="_blank" rel="noopener" data-cta="1" style="display:inline-flex; align-items:center; gap:12px; height:60px; padding:0 36px; background:#8c2f26; color:#fbf9f4; font-size:19px; font-weight:600; border-radius:4px; text-decoration:none; margin-top:6px; transition:background .25s ease;" style-hover="background:#a3392e; color:#fbf9f4; text-decoration:none">Try ParseRAG on RapidAPI <span data-arrow="1" style="font-family:'JetBrains Mono',monospace;">&rarr;</span></a>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; font-family:'JetBrains Mono',monospace; font-size:13px; color:#9a9186; margin-top:10px;">
+          <span>REST</span><span>&middot;</span><span>OpenAPI 3.1</span><span>&middot;</span><span>50 MB per file</span><span>&middot;</span><span>synchronous</span><span>&middot;</span><span>free plan available</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer style="background:#15130f; border-top:1px solid #2b2721;">
+    <div style="box-sizing:border-box; max-width:1200px; margin:0 auto; padding:32px; display:flex; align-items:center; gap:28px; flex-wrap:wrap;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="uploads/favicon-32.png" alt="" width="32" height="32" loading="lazy" style="display:block; width:22px; height:22px;">
+        <span style="font-size:15px; color:#9a9186;">&copy; 2026 ParseRAG</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap; margin-left:auto; font-size:15px;">
+        <a href="https://rapidapi.com/parserag-parserag-default/api/parserag" target="_blank" rel="noopener" style="color:#cfc7b8;" style-hover="color:#f4f1ea">RapidAPI</a>
+        <a href="#start" style="color:#cfc7b8;" style-hover="color:#f4f1ea">Quick start</a>
+        <a href="#start" style="color:#9a9186;" style-hover="color:#f4f1ea">Legal</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1000},&quot;motionLevel&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;subtle&quot;,&quot;off&quot;],&quot;default&quot;:&quot;full&quot;,&quot;tsType&quot;:&quot;'full'|'subtle'|'off'&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;loopSignatures&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;heroAutoplay&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Motion&quot;}}">
+const SNIPPETS = {
+  curl: 'curl -X POST \\\n  https://parserag.p.rapidapi.com/api/v1/parse \\\n  -H "X-RapidAPI-Key: YOUR_KEY" \\\n  -F "file=@document.pdf"',
+  python: 'import requests\n\nwith open("document.pdf", "rb") as f:\n    r = requests.post(\n        "https://parserag.p.rapidapi.com/api/v1/parse",\n        headers={"X-RapidAPI-Key": "YOUR_KEY"},\n        files={"file": f},\n    )\n\nchunks = r.json()["chunks"]',
+  java: 'RequestBody body = new MultipartBody.Builder()\n    .setType(MultipartBody.FORM)\n    .addFormDataPart("file", "document.pdf",\n        RequestBody.create(new File("document.pdf"),\n            MediaType.parse("application/pdf")))\n    .build();\n\nRequest request = new Request.Builder()\n    .url("https://parserag.p.rapidapi.com/api/v1/parse")\n    .post(body)\n    .addHeader("X-RapidAPI-Key", "YOUR_KEY")\n    .build();'
+};
+
+const STAGES = [
+  { num: '01', label: 'VALIDATE', title: 'Rejected before it costs you anything.',
+    body: 'File signature and content type checked, 50 MB cap enforced, before a single page is read.',
+    meta: 'PDF signature + 50 MB cap',
+    rows: [['%PDF-1.7', 'n'], ['content-type: application/pdf', 'n'], ['size: 4.2 MB / 50 MB', 'n'], ['accepted', 'r']] },
+  { num: '02', label: 'EXTRACT', title: 'Correct reading order, even on multi-column pages.',
+    body: 'Read as a stack of bands rather than a fixed column count, so a spanning title cannot scramble the text beneath it. Tables keep their structure; pages with no text layer go to a vision model.',
+    meta: 'column-aware bands + vision fallback',
+    rows: [['band 1   full width   title', 'n'], ['band 2   2 columns   body', 'n'], ['band 3   full width   caption', 'n'], ['band 4   2 columns   body', 'n'], ['reading order resolved', 'r']] },
+  { num: '03', label: 'CLEAN', title: 'Boilerplate stops diluting your embeddings.',
+    body: 'Journal titles, DOI lines and page numbers that repeat across pages are detected and stripped.',
+    meta: 'type: HEADER_ARTIFACT',
+    rows: [['J. Retrieval Systems, Vol. 12', 'm'], ['doi:10.0000/jrs.2024.0312', 'm'], ['page 4 of 12', 'm'], ['3 artifacts removed', 'r']] },
+  { num: '04', label: 'CHUNK', title: 'Sized for embedding, scored for trust.',
+    body: 'Overlapping windows, each with a type, a confidence score, and a flag when the parser is not sure.',
+    meta: 'confidence + manual_review_needed',
+    rows: [['chunk_000  PARAGRAPH  0.94', 'n'], ['chunk_001  PARAGRAPH  0.91', 'n'], ['chunk_002  TABLE      0.88', 'n'], ['chunk_003  PARAGRAPH  0.41  flagged', 'r']] },
+  { num: '05', label: 'JSON', title: 'One structured response.',
+    body: 'Document metadata and an ordered array of chunks, ready to embed.',
+    meta: '200 OK  application/json',
+    rows: [['document_id: doc_9f3c1a7b', 'n'], ['pages: 12', 'n'], ['processing_ms: 1843', 'n'], ['chunks: [ 47 ]', 'r']] }
+];
+
+const all = (name, root) => Array.prototype.slice.call((root || document).querySelectorAll('[data-pr="' + name + '"]'));
+const one = (name, root) => (root || document).querySelector('[data-pr="' + name + '"]');
+
+class Component extends DCLogic {
+  state = { tab: 'curl', copied: false, stage: 0 };
+
+  componentDidMount() {
+    this._tls = [];
+    this._sts = [];
+    const level = this.props.motionLevel || 'full';
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.motionOff = level === 'off' || reduced;
+    this.subtle = level === 'subtle';
+    this.loop = this.props.loopSignatures !== false;
+    if (this.motionOff) { this.ungate(); return; }
+    document.documentElement.classList.add('pr-motion');
+    this.waitForGsap(0);
+    this._fail = setTimeout(() => this.ungate(), 5000);
+    this.observeStages();
+    this.onScroll = () => {
+      if (this._raf) return;
+      this._raf = requestAnimationFrame(() => {
+        this._raf = null;
+        const bar = one('progress');
+        if (!bar) return;
+        const h = document.documentElement.scrollHeight - window.innerHeight;
+        bar.style.width = (h > 0 ? Math.min(100, Math.max(0, (window.scrollY / h) * 100)) : 0) + '%';
+      });
+    };
+    window.addEventListener('scroll', this.onScroll, { passive: true });
+    this.onScroll();
+    // a page that loaded while hidden gets no frames: rebuild once it is on screen
+    this.onVis = () => {
+      if (document.visibilityState === 'visible' && this.motionOff && window.gsap) this.armRecovery();
+    };
+    document.addEventListener('visibilitychange', this.onVis);
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    if (this.motionOff || !window.gsap) return;
+    if (prevState.tab !== this.state.tab) this.typeCode();
+    if (prevState.stage !== this.state.stage) {
+      const rows = all('stage-row');
+      if (rows.length) window.gsap.fromTo(rows, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: .38, ease: 'power2.out', stagger: .05, overwrite: true });
+      this.morphStage(this.state.stage, false);
+    }
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this._t);
+    clearTimeout(this._fail);
+    clearTimeout(this._watch);
+    window.removeEventListener('scroll', this.onScroll);
+    document.removeEventListener('visibilitychange', this.onVis);
+    if (this._io) this._io.disconnect();
+    if (this._recCb && window.gsap) window.gsap.ticker.remove(this._recCb);
+    (this._tls || []).forEach(tl => tl && tl.kill());
+    (this._sts || []).forEach(st => st && st.kill());
+  }
+
+  ungate() { document.documentElement.classList.remove('pr-motion'); }
+
+  waitForGsap(tries) {
+    if (window.gsap && window.ScrollTrigger) {
+      clearTimeout(this._fail);
+      window.gsap.registerPlugin(window.ScrollTrigger);
+      this.initMotion();
+      return;
+    }
+    if (tries > 60) { this.ungate(); return; }
+    setTimeout(() => this.waitForGsap(tries + 1), 80);
+  }
+
+  // ---------- motion setup ----------
+
+  initMotion() {
+    const gsap = window.gsap;
+    this.gsap = gsap;
+    // set every gated element to its animation start, then release the CSS gate
+    gsap.set(all('json-line'), { opacity: 0, y: 6 });
+    gsap.set(one('ready'), { opacity: 0, y: 12 });
+    gsap.set([one('badge-wrong'), one('badge-right')], { opacity: 0, scale: .94 });
+    gsap.set(all('sp-step'), { opacity: .25 });
+    gsap.set([one('flag-hi'), one('flag-low'), one('route-arrow'), one('route-box')], { opacity: 0 });
+    gsap.set(all('ocr-line'), { opacity: 0 });
+    this.ungate();
+    // watchdog: if the host never delivers animation frames (throttled/background
+    // iframe), resolve every animated element to the authored static state, then wait
+    // for frames to resume and rebuild the motion layer.
+    this._f0 = gsap.ticker.frame;
+    clearTimeout(this._watch);
+    this._watch = setTimeout(() => {
+      if (gsap.ticker.frame - this._f0 < 6) { this.forceFinal(); this.armRecovery(); }
+    }, 1800);
+
+    this.heroTimeline();
+    this.orderTimeline();
+    this.secondPassTimeline();
+    this.outputTimeline();
+    this.edgeTimelines();
+    this.codeTrigger();
+    this.headerReveals();
+    if (!this._hovered) { this.linkHovers(); this._hovered = true; }
+    this.morphStage(this.state.stage, true);
+  }
+
+  // frames resumed after a throttled start: rebuild the motion layer
+  armRecovery() {
+    const gsap = window.gsap;
+    if (this._rec || !gsap) return;
+    this._rec = true;
+    let n = 0;
+    this._recCb = () => {
+      n++;
+      if (n < 12) return;
+      gsap.ticker.remove(this._recCb);
+      this._rec = false;
+      this.motionOff = false;
+      this.initMotion();
+      window.ScrollTrigger.refresh();
+    };
+    gsap.ticker.add(this._recCb);
+  }
+
+  forceFinal() {
+    const gsap = window.gsap;
+    if (!gsap) return;
+    (this._tls || []).forEach(tl => tl && tl.kill());
+    (this._sts || []).forEach(s => s && s.kill());
+    this._tls = []; this._sts = [];
+    const shown = ['json-line', 'ready', 'sp-step', 'sp-quote', 'flag-hi', 'flag-low', 'route-arrow', 'route-box',
+      'ocr-line', 'resp-line', 'status-pill', 'caret', 'frag', 'stage-row', 'hero-kicker', 'hero-title', 'hero-sub',
+      'hero-cta', 'good-row', 'bad-row', 'sp-frag', 'cell', 'badge-wrong', 'badge-right', 'safe-tag',
+      'pdf-panel', 'engine', 'doc', 'doc-line', 'doc-col', 'doc-art', 'doc-table'];
+    let els = [];
+    shown.forEach(n => { els = els.concat(all(n)); });
+    els = els.concat(Array.prototype.slice.call(document.querySelectorAll('main section h2'))).filter(Boolean);
+    gsap.set(els, { opacity: 1, x: 0, y: 0, scale: 1 });
+    gsap.set(all('bad-row').concat(all('good-row')), { backgroundColor: 'rgba(0,0,0,0)' });
+    gsap.set(all('sp-dot'), { backgroundColor: '#c4baa6', scale: 1 });
+    gsap.set(all('code-line'), { clipPath: 'none', opacity: 1 });
+    gsap.set([one('scan'), one('scan-sweep'), one('tbl-json'), one('req-state'), one('doc-json'), one('doc-check')]
+      .concat(all('det-box')).concat(all('doc-band')).concat(all('doc-chunk')).filter(Boolean), { opacity: 0 });
+    gsap.set(all('doc-art'), { scaleX: 1, opacity: 1 });
+    gsap.set(one('conf-bar'), { width: '94%' });
+    gsap.set(one('conf-bar-low'), { width: '41%' });
+    const fx = one('hero-fx');
+    if (fx) fx.innerHTML = '';
+    [['hero-conf', '0.94'], ['conf-hi', '0.94'], ['conf-num', '0.94'], ['conf-num-low', '0.41']].forEach(p => {
+      const el = one(p[0]);
+      if (el) el.textContent = p[1];
+    });
+    this.motionOff = true;
+    this.ungate();
+  }
+
+  trigger(el, run, once) {
+    if (!el) return;
+    // a throwing timeline must never leave the page mid-animation
+    const fn = () => {
+      try { run(); } catch (e) { console.error(e); this.forceFinal(); }
+    };
+    const st = window.ScrollTrigger.create({
+      trigger: el,
+      start: 'top 72%',
+      once: !!once,
+      onEnter: fn,
+      onEnterBack: once ? null : fn
+    });
+    this._sts.push(st);
+    // built while already scrolled past the trigger point: play now rather than never
+    if (st.progress > 0) fn();
+  }
+
+  track(tl) { if (tl) this._tls.push(tl); return tl; }
+
+  // ---------- 1. hero: PDF -> ParseRAG -> JSON ----------
+
+  heroTimeline() {
+    const hero = one('hero');
+    if (!hero) return;
+    if (this.props.heroAutoplay === false) { this.heroFinal(); return; }
+    this.trigger(hero, () => this.runHero(), true);
+  }
+
+  heroFinal() {
+    const gsap = this.gsap;
+    gsap.set(all('json-line'), { opacity: 1, y: 0 });
+    gsap.set(one('ready'), { opacity: 1, y: 0 });
+  }
+
+  runHero() {
+    const gsap = this.gsap;
+    const hero = one('hero');
+    const fx = one('hero-fx');
+    const engine = one('engine');
+    const frags = all('frag');
+    const jsonLines = all('json-line');
+    if (!hero || !fx || !engine) return;
+    if (this._heroTL) this._heroTL.kill();
+    fx.innerHTML = '';
+
+    const hr = hero.getBoundingClientRect();
+    const er = engine.getBoundingClientRect();
+    const chips = frags.map(f => {
+      const r = f.getBoundingClientRect();
+      const c = document.createElement('div');
+      c.textContent = f.getAttribute('data-label') || '';
+      c.style.cssText = 'position:absolute;box-sizing:border-box;left:' + (r.left - hr.left) + 'px;top:' + (r.top - hr.top - 3) + 'px;width:' + r.width + 'px;height:' + Math.max(r.height + 6, 16) + 'px;border:1px solid #8c2f26;background:rgba(140,47,38,.07);color:#8c2f26;font:700 9px/1 "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;display:flex;align-items:center;justify-content:flex-end;padding:0 5px;opacity:0;will-change:transform,opacity;';
+      fx.appendChild(c);
+      return { el: c, r: r };
+    });
+    const narrow = er.left < hr.left + 8;
+    const els = chips.map(c => c.el);
+    // staging column: fragments first lift out of the page, then travel as a set
+    const liftX = chips.map(c => narrow ? 0 : Math.min(46, (er.left - c.r.left) * .22));
+    const dx = chips.map(c => narrow ? 0 : (er.left + 20) - c.r.left);
+    const dy = chips.map((c, i) => (er.top + (narrow ? 24 : 58) + i * 19) - c.r.top);
+    const num = one('hero-conf');
+    if (num) num.textContent = '0.00';
+
+    const tl = gsap.timeline();
+    this._heroTL = this.track(tl);
+
+    // 1. the page separates: content dims, fragment outlines are found
+    tl.to(frags, { opacity: .26, duration: .5, ease: 'power2.inOut', stagger: .07 }, 0)
+      .to(els, { opacity: 1, duration: .3, ease: 'power2.out', stagger: .09 }, .2)
+      // 2. anticipation: a small lift away from the page before the long move
+      .to(els, { x: i => liftX[i], y: -5, scale: 1.03, duration: .42, ease: 'power2.out', stagger: .07, transformOrigin: '0% 50%' }, .75)
+      // 3. travel: long, staggered, depth-varied. Mid-flight the labels morph from
+      //    layout regions into chunk identities: the fragment becomes a chunk.
+      .to(els, {
+        x: i => dx[i], y: i => dy[i], scale: 1,
+        width: Math.max(er.width - 40, 90), height: 14,
+        duration: 1.25, ease: 'power3.inOut', stagger: .13,
+        onStart: () => {
+          els.forEach((el, i) => {
+            const label = chips[i].el.textContent;
+            setTimeout(() => {
+              el.textContent = 'chunk_00' + i + ' \u00b7 ' + label;
+              el.style.justifyContent = 'space-between';
+            }, 520 + i * 130);
+          });
+        }
+      }, 1.35)
+      // camera: focus tightens on the parsing layer while the page recedes
+      .to(one('pdf-panel'), { opacity: .55, scale: .985, duration: .8, ease: 'power2.inOut', transformOrigin: '0% 50%' }, 1.5)
+      .to(engine, { scale: 1.02, duration: .9, ease: 'power2.inOut' }, 2.2)
+      .to(engine, { scale: 1, duration: 1, ease: 'power2.inOut' }, 3.4)
+      .to(one('pdf-panel'), { opacity: 1, scale: 1, duration: 1, ease: 'power2.out' }, 3.5)
+      // 4. the parsing layer activates over the arriving fragments
+      .to(one('scan'), { opacity: 1, duration: .12 }, 2.35)
+      .to(one('scan'), { y: er.height, duration: .95, ease: 'power2.inOut' }, 2.45)
+      .to(one('scan'), { opacity: 0, duration: .22 }, 3.3)
+      .to(els, { x: i => dx[i] + 10, opacity: 0, scale: .97, duration: .38, ease: 'power2.in', stagger: .07 }, 2.95)
+      // 5. structured output assembles, then pauses before the verdict
+      .to(jsonLines, { opacity: 1, y: 0, duration: .36, ease: 'power2.out', stagger: .11 }, 3.25)
+      .to(frags, { opacity: 1, duration: .7, ease: 'power2.out', stagger: .05 }, 3.5);
+
+    if (num) {
+      const o = { v: 0 };
+      tl.to(o, {
+        v: .94, duration: 1.05, ease: 'power2.out',
+        onUpdate: () => { num.textContent = o.v.toFixed(2); }
+      }, 3.6)
+        .fromTo(num, { scale: 1 }, { scale: 1.14, duration: .16, yoyo: true, repeat: 1, ease: 'power2.out', transformOrigin: '0% 50%' }, 4.7);
+    }
+    tl.to(one('ready'), { opacity: 1, y: 0, duration: .55, ease: 'power3.out' }, 4.9)
+      .add(() => { fx.innerHTML = ''; this.ambient(); }, 5.5);
+  }
+
+  // the sticky document object: one visual that evolves through the five stages
+  morphStage(i, instant) {
+    const gsap = this.gsap || window.gsap;
+    const doc = one('doc');
+    if (!gsap || !doc) return;
+    if (this._morph) this._morph.kill();
+    const d = instant ? 0 : .55;
+    const e = 'power3.inOut';
+    const bands = all('doc-band');
+    const chunks = all('doc-chunk');
+    const arts = all('doc-art');
+    const lines = all('doc-line');
+    const cols = all('doc-col');
+    const tl = gsap.timeline();
+    this._morph = this.track(tl);
+
+    const base = { duration: d, ease: e, overwrite: 'auto' };
+    // defaults for every stage, then the stage's own deltas
+    tl.to(one('doc-check'), Object.assign({ opacity: i === 0 ? 1 : 0, scale: i === 0 ? 1 : .9 }, base), 0)
+      .to(bands, Object.assign({ opacity: i === 1 ? 1 : 0 }, base, { stagger: instant ? 0 : .06 }), 0)
+      .to(chunks, Object.assign({ opacity: i === 3 ? 1 : 0, y: i === 3 ? 0 : 6 }, base, { stagger: instant ? 0 : .07 }), 0)
+      .to(arts, Object.assign({ opacity: i >= 2 ? .12 : 1, scaleX: i >= 2 ? .4 : 1, transformOrigin: '0% 50%' }, base), 0)
+      .to(cols, Object.assign({ x: i === 1 ? (j => (j === 0 ? -7 : 7)) : 0 }, base), 0)
+      .to(lines, Object.assign({ opacity: i >= 3 ? .45 : 1 }, base, { stagger: instant ? 0 : .015 }), 0)
+      .to(one('doc-table'), Object.assign({ opacity: i >= 3 ? .5 : 1, borderColor: i === 1 ? '#a8752c' : '#d2cabb' }, base), 0)
+      .to(one('doc-json'), Object.assign({ opacity: i === 4 ? 1 : 0 }, base), 0)
+      // camera: a small settle on the object itself as the stage changes
+      .to(doc, { scale: 1, duration: d, ease: e }, 0);
+    if (!instant) tl.fromTo(doc, { scale: .988 }, { scale: 1, duration: .6, ease: 'power2.out' }, 0);
+  }
+
+  // ambient loop after the hero resolves: the system stays quietly alive
+  ambient() {
+    const gsap = this.gsap;
+    if (!gsap || this._amb) return;
+    const ready = one('ready');
+    const conf = one('hero-conf');
+    const tl = gsap.timeline({ repeat: -1, repeatDelay: 3.4 });
+    this._amb = this.track(tl);
+    if (ready) {
+      const dot = ready.querySelector('span');
+      if (dot) tl.fromTo(dot, { opacity: 1 }, { opacity: .35, duration: .7, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 0);
+    }
+    if (conf) tl.fromTo(conf, { opacity: 1 }, { opacity: .5, duration: .5, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 1.1);
+  }
+
+  // hovering a rail label highlights the matching JSON line
+  linkHovers() {
+    const gsap = this.gsap;
+    const pairs = [['label-conf', 'json-conf-row', 'rgba(140,47,38,.2)'], ['label-flag', 'json-flag-row', 'rgba(47,74,110,.2)']];
+    pairs.forEach(p => {
+      const label = one(p[0]);
+      const row = one(p[1]);
+      if (!label || !row) return;
+      const base = p[1] === 'json-conf-row' ? 'rgba(140,47,38,.1)' : 'rgba(47,74,110,.1)';
+      label.addEventListener('mouseenter', () => gsap.to(row, { backgroundColor: p[2], x: 3, duration: .28, ease: 'power2.out' }));
+      label.addEventListener('mouseleave', () => gsap.to(row, { backgroundColor: base, x: 0, duration: .35, ease: 'power2.out' }));
+    });
+  }
+
+  // ---------- 2. reading order ----------
+
+  orderTimeline() {
+    const section = one('order-section');
+    const bad = all('bad-row');
+    const good = all('good-row');
+    if (!section || !bad.length) return;
+    this.trigger(section, () => this.runOrder(), false);
+  }
+
+  runOrder() {
+    const gsap = this.gsap;
+    if (this._orderTL) this._orderTL.kill();
+    const bad = all('bad-row');
+    const good = all('good-row');
+    const list = one('good-list');
+    const l1 = one('legend-1');
+    const l2 = one('legend-2');
+    const rowH = good.length > 1 ? good[1].offsetTop - good[0].offsetTop : 24;
+    const scramble = [0, 3, 1, 4, 2, 5]; // dom index -> interleaved slot
+
+    gsap.set(bad, { backgroundColor: 'rgba(0,0,0,0)' });
+    gsap.set(good, { backgroundColor: 'rgba(0,0,0,0)', y: i => (scramble[i] - i) * rowH });
+    gsap.set([one('badge-wrong'), one('badge-right')], { opacity: 0, scale: .94 });
+    gsap.set([l1, l2], { opacity: .45 });
+
+    // the correct-order side also starts pushed out to its source column, so the
+    // reconstruction travels horizontally as well as vertically
+    gsap.set(good, { x: i => (scramble[i] % 2 === 0 ? -16 : 22) });
+
+    const tl = gsap.timeline({ repeat: this.loop ? -1 : 0, repeatDelay: 2.6 });
+    this._orderTL = this.track(tl);
+
+    // 1. the naive reading cursor walks the interleaved output, jumping columns
+    bad.forEach((row, i) => {
+      const at = .2 + i * .36;
+      tl.to(row, { backgroundColor: 'rgba(140,47,38,.14)', x: 5, duration: .18, ease: 'power2.out' }, at)
+        .to(row, { backgroundColor: 'rgba(0,0,0,0)', x: 0, duration: .34, ease: 'power2.inOut' }, at + .32);
+      const lg = row.getAttribute('data-col') === '1' ? l1 : l2;
+      const other = row.getAttribute('data-col') === '1' ? l2 : l1;
+      tl.to(lg, { opacity: 1, duration: .12 }, at)
+        .to(other, { opacity: .35, duration: .12 }, at);
+    });
+    // 2. hold on the bad transition, then state the verdict
+    tl.to([bad[1], bad[2]], { backgroundColor: 'rgba(140,47,38,.2)', duration: .22 }, 2.35)
+      .to(one('badge-wrong'), { opacity: 1, scale: 1, duration: .34, ease: 'back.out(2)' }, 2.5)
+      .to([bad[1], bad[2]], { backgroundColor: 'rgba(0,0,0,0)', duration: .5 }, 3.05);
+
+    // 3. physical reconstruction: rows travel out, past each other, into position
+    tl.to(good, { x: i => (scramble[i] % 2 === 0 ? -30 : 40), duration: .45, ease: 'power2.out', stagger: .05 }, 3.25)
+      .to(good, { y: 0, duration: .95, ease: 'power3.inOut', stagger: .07 }, 3.7)
+      .to(good, { x: 0, duration: .6, ease: 'power3.out', stagger: .06 }, 4.35);
+    // 4. a reading cursor confirms the sequence, top to bottom, one column then the next
+    good.forEach((row, i) => {
+      const at = 5.05 + i * .24;
+      tl.to(row, { backgroundColor: 'rgba(168,117,44,.16)', duration: .14 }, at)
+        .to(row, { backgroundColor: 'rgba(0,0,0,0)', duration: .3 }, at + .28);
+    });
+    tl.to(one('badge-right'), { opacity: 1, scale: 1, duration: .34, ease: 'back.out(2)' }, 6.55)
+      .to([l1, l2], { opacity: .45, duration: .3 }, 6.55);
+    if (this.loop) tl.to([one('badge-wrong'), one('badge-right')], { opacity: 0, duration: .5 }, 8.4);
+  }
+
+  // ---------- 3. second pass ----------
+
+  secondPassTimeline() {
+    const section = one('second-pass');
+    if (!section) return;
+    this.trigger(section, () => this.runSecondPass(), false);
+  }
+
+  runSecondPass() {
+    const gsap = this.gsap;
+    if (this._spTL) this._spTL.kill();
+    const steps = all('sp-step');
+    const dots = all('sp-dot');
+    const frags = all('sp-frag');
+    const rowH = frags.length > 1 ? frags[1].offsetTop - frags[0].offsetTop : 20;
+    const bad = [0, 3, 1, 4, 2, 5];
+
+    gsap.set(steps, { opacity: .25 });
+    gsap.set(dots, { backgroundColor: '#c4baa6', scale: 1 });
+    gsap.set(frags, { y: 0, x: 0, opacity: 1 });
+
+    const tl = gsap.timeline({ repeat: this.loop ? -1 : 0, repeatDelay: 2.8 });
+    this._spTL = this.track(tl);
+    const light = (i, color, at) => {
+      tl.to(steps[i], { opacity: 1, duration: .25 }, at)
+        .to(dots[i], { backgroundColor: color, scale: 1.3, duration: .22, ease: 'power2.out' }, at)
+        .to(dots[i], { scale: 1, duration: .22 }, at + .22);
+    };
+
+    // initial assembly
+    tl.fromTo(frags, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: .42, stagger: .08, ease: 'power2.out' }, 0);
+    light(0, '#a8752c', .55);
+    // quality check: the parser reads its own output back, line by line
+    light(1, '#a8752c', 1.15);
+    frags.forEach((f, i) => {
+      tl.to(f, { x: 6, duration: .1, ease: 'power1.out' }, 1.3 + i * .09)
+        .to(f, { x: 0, duration: .16, ease: 'power1.inOut' }, 1.4 + i * .09);
+    });
+    // conflict: what it produced was interleaved
+    tl.to(frags, { y: i => (bad[i] - i) * rowH, duration: .55, ease: 'power2.inOut', stagger: .04 }, 2.0);
+    light(2, '#8c2f26', 2.2);
+    // deliberate hold: the system has found a problem and stops before acting
+    tl.to(frags, { opacity: .85, duration: .3 }, 2.75)
+      .to({}, { duration: .45 }, 2.85);
+    // reject: alignment visibly breaks
+    tl.to(frags, { x: i => -10 - i * 3, opacity: .35, duration: .3, ease: 'power3.in', stagger: .035 }, 3.35);
+    light(3, '#8c2f26', 3.45);
+    // reassemble, correctly, with overlap
+    tl.to(frags, { y: 0, duration: .7, ease: 'power3.inOut', stagger: .06 }, 3.85)
+      .to(frags, { x: 0, opacity: 1, duration: .6, ease: 'power3.out', stagger: .06 }, 4.05);
+    light(4, '#a8752c', 4.2);
+    light(5, '#1e1b16', 5.0);
+    tl.fromTo(one('sp-quote'), { opacity: .35, y: 10 }, { opacity: 1, y: 0, duration: .7, ease: 'power3.out' }, 5.05);
+  }
+
+  // ---------- 4. output / confidence ----------
+
+  outputTimeline() {
+    const section = one('output-section');
+    if (!section) return;
+    this.trigger(section, () => this.runOutput(), false);
+  }
+
+  runOutput() {
+    const gsap = this.gsap;
+    if (this._outTL) this._outTL.kill();
+    const hi = one('conf-num');
+    const heroLike = one('conf-hi');
+    const low = one('conf-num-low');
+    const tl = gsap.timeline();
+    this._outTL = this.track(tl);
+
+    gsap.set([one('flag-hi'), one('flag-low'), one('route-arrow'), one('route-box')], { opacity: 0 });
+    gsap.set(one('conf-bar'), { width: '0%' });
+    gsap.set(one('conf-bar-low'), { width: '0%' });
+
+    const safe = one('safe-tag');
+    if (safe) gsap.set(safe, { opacity: .25 });
+
+    // resolved in visible steps rather than a smooth ramp: 0.31, 0.58, 0.76, 0.94
+    const a = { v: 0 };
+    const write = () => {
+      const t = a.v.toFixed(2);
+      if (hi) hi.textContent = t;
+      if (heroLike) heroLike.textContent = t;
+    };
+    [[.31, .28], [.58, .3], [.76, .26], [.94, .34]].forEach((s, i) => {
+      const at = .15 + i * .42;
+      tl.to(a, { v: s[0], duration: s[1], ease: 'power2.out', onUpdate: write }, at)
+        .to(one('conf-bar'), { width: (s[0] * 100) + '%', duration: s[1], ease: 'power2.out' }, at);
+    });
+    // settle: a tight pulse, then the verdict fields
+    tl.fromTo(hi, { scale: 1 }, { scale: 1.16, duration: .15, yoyo: true, repeat: 1, ease: 'power2.out', transformOrigin: '100% 50%' }, 1.95)
+      .to(one('flag-hi'), { opacity: 1, duration: .32 }, 2.15)
+      .to(safe, { opacity: 1, duration: .4, ease: 'power2.out' }, 2.35);
+
+    // the uncertain chunk: resolves low, then is routed out of the index
+    const b = { v: 0 };
+    tl.to(b, { v: .41, duration: .75, ease: 'power2.out', onUpdate: () => { if (low) low.textContent = b.v.toFixed(2); } }, 2.7)
+      .to(one('conf-bar-low'), { width: '41%', duration: .75, ease: 'power2.out' }, 2.7)
+      .to({}, { duration: .3 }, 3.45)
+      .to(one('flag-low'), { opacity: 1, duration: .3 }, 3.75)
+      .fromTo(one('route-arrow'), { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: .32, ease: 'power2.out' }, 3.95)
+      .fromTo(one('route-box'), { opacity: 0, x: -14, scale: .96 }, { opacity: 1, x: 0, scale: 1, duration: .45, ease: 'power3.out' }, 4.1)
+      .fromTo(one('route-box'), { boxShadow: '0 0 0 0 rgba(140,47,38,0)' }, { boxShadow: '0 0 0 3px rgba(140,47,38,.14)', duration: .3, yoyo: true, repeat: 1 }, 4.55);
+  }
+
+  // ---------- edge cases: scan sweep + table -> json ----------
+
+  // edge cases are interactive rather than perpetual: one pass on entry, replay on hover
+  hoverReplay(card, run) {
+    if (!card || card._pr) return;
+    card._pr = true;
+    card.addEventListener('mouseenter', () => {
+      try { run(); } catch (e) { console.error(e); }
+    });
+  }
+
+  edgeTimelines() {
+    const gsap = this.gsap;
+    const scanCard = one('card-scan');
+    if (scanCard) {
+      this.hoverReplay(scanCard, () => this._runScan && this._runScan());
+      const runScan = () => {
+        if (this._scanTL) this._scanTL.kill();
+        const sweep = one('scan-sweep');
+        const lines = all('ocr-line');
+        const boxes = all('det-box');
+        const tl = gsap.timeline({ repeat: 0 });
+        this._scanTL = this.track(tl);
+        gsap.set(lines, { opacity: 0 });
+        gsap.set(boxes, { opacity: 0, scaleX: .9, transformOrigin: '0% 50%' });
+        gsap.set(sweep, { y: 0, opacity: 0 });
+        // scanning pass, then detected regions, then the transcribed text
+        tl.to(sweep, { opacity: 1, duration: .12 }, 0)
+          .to(sweep, { y: 46, duration: 1.15, ease: 'power1.inOut' }, .12)
+          .to(boxes, { opacity: 1, scaleX: 1, duration: .26, stagger: .3, ease: 'power2.out' }, .34)
+          .to(sweep, { opacity: 0, duration: .2 }, 1.3)
+          .to(lines, { opacity: 1, duration: .3, stagger: .16 }, 1.5)
+          .to(boxes, { opacity: 0, duration: .4, stagger: .08 }, 2.1);
+      };
+      this._runScan = runScan;
+      this.trigger(scanCard, runScan, true);
+    }
+
+    const tblCard = one('card-table');
+    if (tblCard) {
+      this.hoverReplay(tblCard, () => this._runTable && this._runTable());
+      const runTable = () => {
+        if (this._tblTL) this._tblTL.kill();
+        const cells = all('cell');
+        const grid = one('tbl-grid');
+        const json = one('tbl-json');
+        const tl = gsap.timeline({ repeat: 0 });
+        this._tblTL = this.track(tl);
+        gsap.set(json, { opacity: 0 });
+        gsap.set(grid, { opacity: 1 });
+        gsap.set(cells, { x: 0, y: 0, opacity: 1 });
+        // deterministic: rows detach, columns align, the header row separates, JSON forms
+        const col = i => i % 3;
+        const rowOf = i => Math.floor(i / 3);
+        tl.to(cells, { y: i => rowOf(i) * 4 - 4, duration: .4, ease: 'power2.out', stagger: { each: .04, from: 'start' } }, .2)
+          .to(cells, { x: i => (col(i) - 1) * 7, duration: .45, ease: 'power3.inOut', stagger: .03 }, .7)
+          .to(cells.filter((c, i) => rowOf(i) === 0), { y: -9, duration: .35, ease: 'power2.out', stagger: .04 }, 1.2)
+          .to(cells, { opacity: .12, duration: .4, stagger: .02 }, 1.5)
+          .to(json, { opacity: 1, duration: .4, ease: 'power2.out' }, 1.8)
+          .to(json, { opacity: 0, duration: .4 }, 3.4)
+          .to(cells, { x: 0, y: 0, opacity: 1, duration: .55, ease: 'power3.inOut', stagger: .025 }, 3.5);
+      };
+      this._runTable = runTable;
+      this.trigger(tblCard, runTable, true);
+    }
+  }
+
+  // ---------- code block typing ----------
+
+  codeTrigger() {
+    const section = one('code-section');
+    if (!section) return;
+    this.trigger(section, () => this.typeCode(), true);
+  }
+
+  typeCode() {
+    const gsap = this.gsap || window.gsap;
+    if (!gsap) return;
+    if (this._codeTL) this._codeTL.kill();
+    const lines = all('code-line');
+    const resp = all('resp-line');
+    const pill = one('status-pill');
+    const caret = one('caret');
+    if (!lines.length) return;
+    const tl = gsap.timeline();
+    this._codeTL = this.track(tl);
+    gsap.set(lines, { clipPath: 'inset(0 100% 0 0)', opacity: 1 });
+    gsap.set(resp, { opacity: 0, x: -4 });
+    gsap.set(pill, { opacity: 0 });
+    if (caret) gsap.set(caret, { opacity: 0 });
+    let at = 0;
+    lines.forEach(l => {
+      const chars = Math.max((l.textContent || '').length, 4);
+      const d = Math.min(.06 + chars * .012, .55);
+      tl.to(l, { clipPath: 'inset(0 0% 0 0)', duration: d, ease: 'none' }, at);
+      at += d + .04;
+    });
+    if (caret) tl.to(caret, { opacity: 1, duration: .1 }, at);
+    const req = one('req-state');
+    gsap.set(req, { opacity: 0 });
+    // request sent -> short wait -> status and timing -> response body
+    tl.to(req, { opacity: 1, duration: .25 }, at + .3);
+    if (req) {
+      const dot = req.querySelector('span');
+      if (dot) tl.fromTo(dot, { opacity: 1 }, { opacity: .2, duration: .28, yoyo: true, repeat: 3, ease: 'sine.inOut' }, at + .35);
+    }
+    tl.to(req, { opacity: 0, duration: .22 }, at + 1.5)
+      .fromTo(pill, { opacity: 0, y: -4 }, { opacity: 1, y: 0, duration: .3, ease: 'power2.out' }, at + 1.6)
+      .to(resp, { opacity: 1, x: 0, duration: .22, stagger: .055, ease: 'power1.out' }, at + 1.8);
+  }
+
+  // ---------- restrained section reveals ----------
+
+  headerReveals() {
+    const gsap = this.gsap;
+    const heads = Array.prototype.slice.call(document.querySelectorAll('main section h2'));
+    heads.forEach(h => {
+      const st = window.ScrollTrigger.create({
+        trigger: h, start: 'top 88%', once: true,
+        onEnter: () => gsap.fromTo(h, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' })
+      });
+      this._sts.push(st);
+    });
+    if (!this.subtle) {
+      const intro = [one('hero-kicker'), one('hero-title'), one('hero-sub'), one('hero-cta')].filter(Boolean);
+      gsap.fromTo(intro, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .7, ease: 'power3.out', stagger: .1 });
+    }
+  }
+
+  // ---------- sticky scroll story ----------
+
+  observeStages() {
+    if (typeof IntersectionObserver !== 'function') return;
+    const blocks = all('stage-block');
+    if (!blocks.length) { this._stageRetry = (this._stageRetry || 0) + 1; if (this._stageRetry < 40) setTimeout(() => this.observeStages(), 120); return; }
+    this._io = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        const idx = parseInt(e.target.getAttribute('data-idx'), 10);
+        if (!isNaN(idx) && idx !== this.state.stage) this.setState({ stage: idx });
+      });
+    }, { rootMargin: '-45% 0px -45% 0px', threshold: 0 });
+    blocks.forEach(b => this._io.observe(b));
+  }
+
+  // ---------- code tabs ----------
+
+  pick(tab) { this.setState({ tab: tab, copied: false }); }
+
+  copy = () => {
+    const text = SNIPPETS[this.state.tab] || '';
+    const done = () => {
+      this.setState({ copied: true });
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState({ copied: false }), 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+    } else { done(); }
+  };
+
+  renderVals() {
+    const t = this.state.tab;
+    const i = this.state.stage;
+    const active = STAGES[i] || STAGES[0];
+
+    const stages = STAGES.map((s, idx) => ({
+      idx: idx,
+      num: s.num,
+      label: s.label,
+      title: s.title,
+      body: s.body,
+      isActive: idx === i,
+      notActive: idx !== i,
+      pick: () => this.setState({ stage: idx })
+    }));
+
+    const activeRows = active.rows.map(r => ({
+      text: r[0],
+      isNormal: r[1] === 'n',
+      isMuted: r[1] === 'm',
+      isResult: r[1] === 'r'
+    }));
+
+    return {
+      isCurl: t === 'curl', isPython: t === 'python', isJava: t === 'java',
+      notCurl: t !== 'curl', notPython: t !== 'python', notJava: t !== 'java',
+      showCurl: () => this.pick('curl'),
+      showPython: () => this.pick('python'),
+      showJava: () => this.pick('java'),
+      copyCode: this.copy,
+      copied: this.state.copied,
+      replayHero: () => { if (this.gsap && !this.motionOff) this.runHero(); },
+      stages: stages,
+      activeNum: active.num,
+      activeMeta: active.meta,
+      activeRows: activeRows
+    };
+  }
+}
+</script>
+</body>
+</html>
