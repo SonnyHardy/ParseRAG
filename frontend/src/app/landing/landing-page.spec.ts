@@ -41,6 +41,7 @@ describe('Landing page', () => {
       'From PDF to RAG-ready chunks.',
       'Every chunk tells you how much to trust it.',
       'Built for the PDFs that break parsers.',
+      'Before you subscribe.',
       'Give your RAG pipeline cleaner input.',
     ]) {
       expect(headings).toContain(expected);
@@ -70,6 +71,23 @@ describe('Landing page', () => {
   // Les cinq etapes sont dans le DOM des le premier rendu ; le defilement ne fait qu'en mettre
   // une en avant. Si l'une d'elles devenait conditionnelle, la page perdrait un cinquieme de son
   // contenu indexable sans qu'aucun rendu ne change a l'ecran.
+  // Le panneau ferme d'un accordeon PrimeNG reste dans le DOM. C'est ce qui permet a un moteur et
+  // a un agent de lire les six reponses sans cliquer (issue #72), et c'est exactement ce qu'une
+  // implementation maison a base de @if detruirait sans que rien ne change a l'ecran.
+  it('rend les six reponses de la FAQ sans ouvrir les panneaux', () => {
+    const text = root.textContent ?? '';
+    for (const answer of [
+      'Image-only pages skip native extraction',
+      'Text extraction is language-agnostic',
+      'TABLE chunks carry a table_json',
+      'The flag is deliberately cautious',
+      'A native-text document of 200 pages',
+      'Send documents one at a time',
+    ]) {
+      expect(text).toContain(answer);
+    }
+  });
+
   it('rend les cinq etapes du pipeline', () => {
     const text = root.textContent ?? '';
     for (const stage of ['VALIDATE', 'EXTRACT', 'CLEAN', 'CHUNK', 'JSON']) {

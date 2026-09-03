@@ -428,7 +428,7 @@ export class QuickStart implements OnDestroy {
    * La requete part, le statut tombe, la reponse s'ecrit ligne a ligne. **Une seule fois.**
    *
    * Le premier jet rejouait cette sequence a chaque changement d'onglet et a chaque retour dans la
-   * section, en remettant les lignes a `opacity: 0` au debut. Une interruption laissait donc le
+   * section, en remettant les lignes a opacity: 0 au debut. Une interruption laissait donc le
    * panneau vide, ce qui est precisement le defaut reproche au design : un contenu dont l'existence
    * depend du bon deroulement d'une animation. Ici, une fois revelee, la reponse reste.
    */

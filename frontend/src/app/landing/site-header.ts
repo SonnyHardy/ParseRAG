@@ -42,6 +42,7 @@ import { Motion } from './motion';
           <a routerLink="/" fragment="how" class="hd__link">How it works</a>
           <a routerLink="/" fragment="output" class="hd__link">Output</a>
           <a routerLink="/" fragment="start" class="hd__link">Quick start</a>
+          <a routerLink="/" fragment="faq" class="hd__link">FAQ</a>
           <a
             pButton
             class="pr-cta pr-cta--sm"

@@ -139,13 +139,13 @@ export class Motion {
   /**
    * Recalcule les positions de tous les declencheurs, une seule fois par salve.
    *
-   * GSAP rafraichit de lui-meme au `load` et au redimensionnement. Nos declencheurs, eux, sont
-   * crees **apres** le `load`, puisque la bibliotheque est importee dynamiquement : ils calculent
+   * GSAP rafraichit de lui-meme au load et au redimensionnement. Nos declencheurs, eux, sont
+   * crees **apres** le load, puisque la bibliotheque est importee dynamiquement : ils calculent
    * donc leur position sur une mise en page qui n'a pas fini de se poser, les polices et les
    * images n'etant pas encore arrivees. Sans ce rafraichissement, un declencheur peut se croire
    * plus bas qu'il n'est et ne jamais s'activer, ce qui laisse sa section dans son etat de depart.
    *
-   * Deux `requestAnimationFrame` imbriques : le premier laisse Angular finir son rendu, le second
+   * Deux requestAnimationFrame imbriques : le premier laisse Angular finir son rendu, le second
    * laisse le navigateur recalculer la mise en page avant qu'on ne la mesure.
    */
   private scheduleRefresh(api: MotionApi): void {

@@ -8,6 +8,7 @@ import { HowItWorks } from './how-it-works';
 import { SecondPass } from './second-pass';
 import { Output } from './output';
 import { EdgeCases } from './edge-cases';
+import { Faq } from './faq';
 import { FinalCta } from './final-cta';
 import { SiteFooter } from './site-footer';
 import { Motion } from './motion';
@@ -33,6 +34,7 @@ import { Motion } from './motion';
     SecondPass,
     Output,
     EdgeCases,
+    Faq,
     FinalCta,
     SiteFooter,
   ],
