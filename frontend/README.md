@@ -63,9 +63,9 @@ l'ecran.
 ## La page (issue #69)
 
 Implementee d'apres `docs/brand/Design/project/ParseRAG Site v6.dc.html`, le bundle de handoff de
-Claude Design. Neuf sections, un composant standalone par section sous `src/app/landing/`, dans
-l'ordre du design : accroche, quick start, probleme, pourquoi ca compte, comment ca marche, seconde
-passe, sortie, cas limites, CTA final.
+Claude Design. Onze sections, un composant standalone par section sous `src/app/landing/`, dans
+l'ordre du brief : accroche, quick start, probleme, pourquoi ca compte, comment ca marche, seconde
+passe, sortie, cas limites, plans, FAQ, CTA final.
 
 ### Les animations
 
@@ -92,9 +92,21 @@ Trois choix les gouvernent, tous dans `src/app/landing/motion.ts`.
 `#start`, faute de page a atteindre. La politique de confidentialite arrive avec l'analytique
 qu'elle doit decrire (#74).
 
-**Deux sections du brief absentes du design**, et donc de la page : le tableau des plans et la FAQ.
-Voir la PR de #69 ; elles sont a rouvrir avec #71 et #72, la FAQ etant une surface prevue pour les
-agents.
+**Deux sections etaient au brief sans figurer au design rendu** : le tableau des plans (6.7) et la
+FAQ (6.8). Toutes deux sont implementees, faute de quoi la page laissait sans reponse les deux
+dernieres questions qu'un lecteur se pose avant de s'abonner. Elles sont aussi ce dont dependent
+#71 (balisage `FAQPage`, tableau annonce) et #72, ou elles sont la surface prevue pour les agents.
+
+Le tableau des plans **ne porte aucun prix**, et c'est une consigne du brief plutot qu'un oubli :
+les prix vivent sur le listing RapidAPI, qui est le systeme qui les facture. Recopies ici, ils se
+perimeraient au premier ajustement de grille sans que rien ne le signale. La section renvoie donc
+au listing pour le tarif, et un test verifie qu'aucun montant n'apparait sur la page.
+
+Les noms affiches sont ceux du marketplace (BASIC/PRO/ULTRA/MEGA), pas les noms internes
+(FREE/STARTER/PRO/SCALE) : le faux ami est reel, `PRO` cote RapidAPI vaut `STARTER` chez nous. Les
+limites de pages, elles, sont celles que le backend applique (`parserag.page-limits`) ; les deux
+doivent bouger ensemble, un chiffre affiche plus haut que celui qui est applique se payant en
+`DOCUMENT_TOO_LONG` inattendu.
 
 ## Ce que PrimeNG coute, mesure au socle
 
@@ -108,10 +120,13 @@ L'essentiel de cet ecart est le moteur de theme, paye une fois : les composants 
 de la FAQ, carte, tag) couteront bien moins cher a l'unite. Le chiffre est note ici parce qu'il est
 le point de depart de l'issue #70, ou le budget se juge en taille **transferee** et non brute.
 
-Page complete et animations comprises, le bundle initial est a **644 ko brut / 144 ko transfere**.
-GSAP n'y figure pas : il est charge en deux morceaux differes de 70 ko et 44 ko.
+Page complete et animations comprises, le bundle initial est a **710,5 ko brut / 153,8 ko
+transfere**. GSAP n'y figure pas : il est charge en deux morceaux differes de 72 ko et 44 ko.
+La section des plans, `p-tag` compris, a coute **+10,4 ko brut / +1,7 ko transfere**, ce qui
+confirme la lecture ci-dessus : le moteur de theme paye, un composant de plus ne se voit presque
+pas.
 
-Les budgets de `angular.json` sont a 650 ko d'avertissement et **750 ko d'erreur** sur le bundle
+Les budgets de `angular.json` sont a 760 ko d'avertissement et **850 ko d'erreur** sur le bundle
 initial : reglages provisoires a resserrer en #70, ou ils se jugeront en taille **transferee** et
 apres auto-hebergement des polices.
 

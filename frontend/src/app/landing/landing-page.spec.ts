@@ -31,7 +31,7 @@ describe('Landing page', () => {
     expect(titles[0].textContent).toContain('Turn PDFs into RAG-ready data');
   });
 
-  it('rend les neuf sections du design', () => {
+  it('rend les dix sections de la page', () => {
     const headings = Array.from(root.querySelectorAll('h1, h2')).map((h) => h.textContent?.trim());
     for (const expected of [
       'Turn PDFs into RAG-ready data.',
@@ -41,6 +41,7 @@ describe('Landing page', () => {
       'From PDF to RAG-ready chunks.',
       'Every chunk tells you how much to trust it.',
       'Built for the PDFs that break parsers.',
+      'Metered by requests, bounded by pages.',
       'Before you subscribe.',
       'Give your RAG pipeline cleaner input.',
     ]) {
@@ -52,7 +53,7 @@ describe('Landing page', () => {
   // ne se verrait pas a la relecture d'un diff de gabarit.
   it('envoie tous ses CTA vers le listing RapidAPI', () => {
     const ctas = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[target="_blank"]'));
-    expect(ctas.length).toBe(5);
+    expect(ctas.length).toBe(6);
     for (const cta of ctas) {
       expect(cta.getAttribute('href')).toBe(RAPIDAPI_URL);
       expect(cta.getAttribute('rel')).toContain('noopener');
@@ -86,6 +87,40 @@ describe('Landing page', () => {
     ]) {
       expect(text).toContain(answer);
     }
+  });
+
+  // Le tableau des plans est la derniere chose qu'un lecteur consulte avant de s'abonner, et
+  // l'une des premieres qu'un agent cite. Les quatre lignes doivent donc etre dans le HTML
+  // prerendu, et chaque chiffre rattache a sa colonne par un vrai en-tete : c'est ce qui
+  // distingue un tableau lisible d'une grille de div qui a le meme rendu (issues #71, #72).
+  it('rend la grille des plans dans un tableau annonce', () => {
+    const table = root.querySelector('#plans table');
+    expect(table).not.toBeNull();
+    expect(table?.querySelector('caption')?.textContent).toContain('Prices are on the RapidAPI');
+    expect(table!.querySelectorAll('thead th[scope="col"]').length).toBe(4);
+
+    const rows = Array.from(table!.querySelectorAll('tbody tr'));
+    expect(rows.length).toBe(4);
+    const squash = (el: Element | null | undefined) =>
+      (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(rows.map((row) => squash(row.querySelector('th[scope="row"]')))).toEqual([
+      'BASICFree',
+      'PRO',
+      'ULTRA',
+      'MEGA',
+    ]);
+    expect(rows.map((row) => squash(row.querySelectorAll('td')[2]))).toEqual([
+      '100',
+      '300',
+      '500',
+      '1,000',
+    ]);
+  });
+
+  // Les prix vivent sur le listing, qui les facture. Recopies ici ils se perimeraient en
+  // silence, et le brief de design les interdit explicitement sur cette page.
+  it("n'affiche aucun prix", () => {
+    expect(root.textContent ?? '').not.toMatch(/[$€£]\s?\d/);
   });
 
   it('rend les cinq etapes du pipeline', () => {

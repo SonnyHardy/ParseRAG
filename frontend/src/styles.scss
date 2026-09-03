@@ -170,15 +170,21 @@ a {
 // styles de composant Angular sont encapsules. C'est aussi ce qui neutralise le rendu par defaut
 // du bouton PrimeNG, dont le theme Aura ne correspond pas au design.
 //
-// `!important` sur trois proprietes seulement, celles ou la specificite de PrimeNG l'emporte
+// `!important` sur quatre proprietes seulement, celles ou la specificite de PrimeNG l'emporte
 // autrement. Les etendre a tout le bloc rendrait le CTA impossible a surcharger plus tard.
+//
+// La bordure est la troisieme, et elle a mis du temps a se voir : `.pr-cta` et `.p-button` ont la
+// meme specificite, et la feuille de theme etant injectee apres les styles de la page, c'est Aura
+// qui gagnait. Le CTA portait donc un filet vert emeraude de 0,8 px, sur les six boutons de la
+// page. Poser la largeur a zero suffit : le `border-color` que PrimeNG change au survol n'a alors
+// plus rien a colorer, et l'anneau de focus, qui est un `outline`, n'est pas touche.
 .pr-cta {
   display: inline-flex;
   align-items: center;
   gap: 10px;
   height: 58px;
   padding: 0 34px;
-  border: 0;
+  border: 0 !important;
   border-radius: var(--pr-radius);
   background: var(--pr-red) !important;
   color: var(--pr-paper) !important;
@@ -193,6 +199,26 @@ a {
     background: var(--pr-red-hover) !important;
     color: var(--pr-paper) !important;
     text-decoration: none;
+  }
+
+  // L'anneau de focus, quatrieme et derniere propriete en `!important`.
+  //
+  // Il n'existait pas : Aura pose bien un `outline` sur `:focus-visible`, mais sa couleur se
+  // resolvait en `rgba(0, 0, 0, 0)`. Mesure faite au clavier sur le build de production, les cinq
+  // CTA de la page ne montraient donc **rien** quand on les atteignait au clavier. Une conversion
+  // qu'on ne peut pas viser sans souris n'est pas une conversion, et le brief demande les etats
+  // des boutons dans les deux themes.
+  //
+  // L'ocre plutot que le rouge, qui ne se detacherait pas du bouton rouge, et plutot que l'ambre,
+  // trop clair sur creme. C'est la seule des trois valeurs qui passe le rapport de 3:1 exige d'un
+  // indicateur de focus **sur les deux fonds** de la page : 3,8:1 sur creme, 4,3:1 sur sombre.
+  //
+  // `outline-offset` porte aussi `!important` : la regle d'Aura a la meme specificite que
+  // celle-ci et la feuille de theme est injectee apres, donc sans cela son propre decalage
+  // l'emporte et colle l'anneau au bouton.
+  &:focus-visible {
+    outline: 2px solid var(--pr-ochre) !important;
+    outline-offset: 2px !important;
   }
 
   &--sm {
