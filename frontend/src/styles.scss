@@ -1,11 +1,250 @@
-// Styles globaux. Les tokens de marque issus du canevas Claude Design viendront ici (issue #68) :
-// ils surchargent le preset Aura configure dans app.config.ts plutot que de le remplacer.
+// Tokens et styles globaux de la landing page (issue #69).
+//
+// Les valeurs viennent litteralement du design Claude Design
+// (docs/brand/Design/project/ParseRAG Site v6.dc.html), ou elles etaient en styles en ligne.
+// Les nommer ici est ce qui rend le design modifiable : une couleur changee a un seul endroit
+// plutot qu'a quarante.
+//
+// Les polices sont chargees depuis Google Fonts dans index.html, comme dans le design.
+// L'auto-hebergement releve de l'issue #70, ou il se mesure avec le reste du budget.
 @use 'primeicons/primeicons.css';
 
 :root {
-  color-scheme: light dark;
+  // ---- Encres et surfaces claires -------------------------------------------------
+  --pr-ink: #1e1b16;
+  --pr-ink-soft: #3a3630;
+  --pr-muted: #69645d;
+  --pr-muted-strike: #6f675c;
+  --pr-paper: #fbf9f4;
+  --pr-surface: #f4f1ea;
+  --pr-surface-deep: #efe9dc;
+  --pr-hairline: #d2cabb;
+  --pr-hairline-soft: #e2dbcb;
+
+  // ---- Accents ---------------------------------------------------------------------
+  // Le rouge est rare par construction : dans le logo, une barre sur six. Il marque une seule
+  // chose par vue, le CTA ou la moitie cassee d'un avant/apres.
+  --pr-red: #8c2f26;
+  --pr-red-hover: #a3392e;
+  --pr-red-link-hover: #6e241d;
+  --pr-ochre: #a8752c;
+  --pr-ochre-text: #8a5c1e;
+  --pr-amber: #d99b45;
+  // Le bleu n'existe que pour manual_review_needed : un champ neutre ne doit pas etre rouge,
+  // sinon le lecteur le lit comme une erreur alors qu'il vaut false la plupart du temps.
+  --pr-blue: #2f4a6e;
+
+  // ---- Fonds sombres ---------------------------------------------------------------
+  --pr-dark: #1e1b16;
+  --pr-dark-deep: #15130f;
+  --pr-dark-raised: #2b2721;
+  --pr-dark-border: #37322a;
+  --pr-dark-border-soft: #4a443b;
+  --pr-dark-border-hover: #6e675e;
+  --pr-on-dark: #f7f4ee;
+  --pr-on-dark-soft: #f4f1ea;
+  --pr-on-dark-dim: #cfc7b8;
+  --pr-on-dark-muted: #9a9186;
+
+  // ---- Aplats de maquette (les faux documents) --------------------------------------
+  --pr-mock-strong: #c4baa6;
+  --pr-mock: #d5cdbc;
+  --pr-mock-soft: #e0d8c7;
+  --pr-mock-scan: #dcd3c1;
+  --pr-mock-scan-border: #b3a892;
+  --pr-mock-scan-line: #8a8172;
+  --pr-mock-inactive: #a49b8c;
+  --pr-mock-inactive-text: #8b8377;
+  --pr-low-bg: #f3e3e1;
+  --pr-low-bar: #d8b0aa;
+
+  // ---- Coloration syntaxique sur fond sombre ----------------------------------------
+  --pr-code-string: #a3c39a;
+  --pr-code-keyword: #e8695a;
+  --pr-code-fn: #d99b45;
+  --pr-code-text: #cfc7b8;
+  --pr-code-punct: #9a9186;
+
+  // ---- Typographie ------------------------------------------------------------------
+  --pr-font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --pr-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  // ---- Mesures ----------------------------------------------------------------------
+  --pr-max: 1200px;
+  --pr-gutter: clamp(16px, 4vw, 32px);
+  --pr-radius: 4px;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
+  background: var(--pr-paper);
+  color: var(--pr-ink);
+  font-family: var(--pr-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--pr-red);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--pr-red-link-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+::selection {
+  background: #efe1c8;
+}
+
+// Le design animait ces elements avec GSAP depuis un CDN. Ils sont ici dans leur etat final,
+// visibles sans JavaScript : le contenu de cette page doit exister dans le HTML prerendu, c'est
+// toute sa raison d'etre (issues #70 a #72). Seules subsistent des transitions CSS au survol.
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+// ---- Primitives partagees entre sections ---------------------------------------------
+
+.pr-shell {
+  box-sizing: border-box;
+  max-width: var(--pr-max);
+  margin: 0 auto;
+  padding-inline: var(--pr-gutter);
+}
+
+.pr-kicker {
+  font-family: var(--pr-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pr-red);
+}
+
+.pr-h2 {
+  margin: 0;
+  font-size: clamp(30px, 3.8vw, 48px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.06;
+}
+
+.pr-lede {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--pr-ink-soft);
+}
+
+.pr-mono {
+  font-family: var(--pr-font-mono);
+}
+
+// Bloc de code ou de JSON : defile dans son propre conteneur plutot que de pousser la page.
+// Sans cela, une ligne de cURL fait deborder tout le document a 360 px.
+.pr-scroll-x {
+  overflow-x: auto;
+
+  > * {
+    min-width: min-content;
+  }
+}
+
+// ---- Le CTA ---------------------------------------------------------------------------
+//
+// Pose ici et non dans un composant : le style est partage par les cinq CTA de la page, et les
+// styles de composant Angular sont encapsules. C'est aussi ce qui neutralise le rendu par defaut
+// du bouton PrimeNG, dont le theme Aura ne correspond pas au design.
+//
+// `!important` sur quatre proprietes seulement, celles ou la specificite de PrimeNG l'emporte
+// autrement. Les etendre a tout le bloc rendrait le CTA impossible a surcharger plus tard.
+//
+// La bordure est la troisieme, et elle a mis du temps a se voir : `.pr-cta` et `.p-button` ont la
+// meme specificite, et la feuille de theme etant injectee apres les styles de la page, c'est Aura
+// qui gagnait. Le CTA portait donc un filet vert emeraude de 0,8 px, sur les six boutons de la
+// page. Poser la largeur a zero suffit : le `border-color` que PrimeNG change au survol n'a alors
+// plus rien a colorer, et l'anneau de focus, qui est un `outline`, n'est pas touche.
+.pr-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 58px;
+  padding: 0 34px;
+  border: 0 !important;
+  border-radius: var(--pr-radius);
+  background: var(--pr-red) !important;
+  color: var(--pr-paper) !important;
+  font-family: var(--pr-font-sans);
+  font-size: 19px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.25s ease;
+
+  &:hover {
+    background: var(--pr-red-hover) !important;
+    color: var(--pr-paper) !important;
+    text-decoration: none;
+  }
+
+  // L'anneau de focus, quatrieme et derniere propriete en `!important`.
+  //
+  // Il n'existait pas : Aura pose bien un `outline` sur `:focus-visible`, mais sa couleur se
+  // resolvait en `rgba(0, 0, 0, 0)`. Mesure faite au clavier sur le build de production, les cinq
+  // CTA de la page ne montraient donc **rien** quand on les atteignait au clavier. Une conversion
+  // qu'on ne peut pas viser sans souris n'est pas une conversion, et le brief demande les etats
+  // des boutons dans les deux themes.
+  //
+  // L'ocre plutot que le rouge, qui ne se detacherait pas du bouton rouge, et plutot que l'ambre,
+  // trop clair sur creme. C'est la seule des trois valeurs qui passe le rapport de 3:1 exige d'un
+  // indicateur de focus **sur les deux fonds** de la page : 3,8:1 sur creme, 4,3:1 sur sombre.
+  //
+  // `outline-offset` porte aussi `!important` : la regle d'Aura a la meme specificite que
+  // celle-ci et la feuille de theme est injectee apres, donc sans cela son propre decalage
+  // l'emporte et colle l'anneau au bouton.
+  &:focus-visible {
+    outline: 2px solid var(--pr-ochre) !important;
+    outline-offset: 2px !important;
+  }
+
+  &--sm {
+    height: 40px;
+    padding: 0 18px;
+    gap: 8px;
+    font-size: 15px;
+  }
+
+  &--md {
+    height: 52px;
+    padding: 0 28px;
+    font-size: 18px;
+  }
+
+  &--lg {
+    height: 60px;
+    padding: 0 36px;
+    gap: 12px;
+  }
+
+  &__arrow {
+    transition: transform 0.28s cubic-bezier(0.22, 0.7, 0.2, 1);
+  }
+
+  &:hover &__arrow {
+    transform: translateX(5px);
+  }
 }

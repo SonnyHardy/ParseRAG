@@ -2,12 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <!-- Titre et description definitifs, canonical, Open Graph et JSON-LD arrivent a l'issue #71.
-       Celui-ci remplace seulement le "ParseragSite" genere par le CLI, qui aurait fini publie. -->
-  <title>ParseRAG</title>
+  <title>ParseRAG: PDF Parsing API for RAG</title>
+  <meta name="description" content="Turn PDFs into clean, structured JSON and RAG-ready chunks with real reading order, table extraction, confidence scoring, and vision fallback.">
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="brand/favicon-32.png">
+  <!-- Les deux familles du design. Le preconnect vers gstatic est ce qui evite une chaine de
+       requetes serialisee : la feuille arrive de googleapis, les fichiers de police de gstatic.
+       L'auto-hebergement, qui supprimerait ces deux tiers, releve de l'issue #70. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <app-root></app-root>

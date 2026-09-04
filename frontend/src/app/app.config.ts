@@ -1,5 +1,5 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
-import { provideRouter } from '@angular/router';
+import { provideRouter, withInMemoryScrolling } from '@angular/router';
 import { provideClientHydration } from '@angular/platform-browser';
 import { providePrimeNG } from 'primeng/config';
 import Aura from '@primeuix/themes/aura';
@@ -10,7 +10,13 @@ import { PRIMENG_LICENSE_KEY } from '../generated/primeng-license';
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideRouter(routes),
+    // `anchorScrolling` : sans lui, un lien vers /#how depuis une page legale change bien d'URL
+    // mais ne defile nulle part. `scrollPositionRestoration` remet la page en haut au changement
+    // de route, ce que le navigateur ne fait pas de lui-meme sur une application a page unique.
+    provideRouter(
+      routes,
+      withInMemoryScrolling({ anchorScrolling: 'enabled', scrollPositionRestoration: 'enabled' }),
+    ),
     provideClientHydration(),
     providePrimeNG({
       // Cle generee au build depuis PRIMENG_LICENSE_KEY (scripts/write-license.mjs). PrimeNG 22

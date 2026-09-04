@@ -4,11 +4,13 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": [
-      "vitest/globals"
+      "vitest/globals",
+      "node"
     ]
   },
   "include": [
     "src/**/*.d.ts",
+    "src/test-setup.ts",
     "src/**/*.spec.ts"
   ]
 }
