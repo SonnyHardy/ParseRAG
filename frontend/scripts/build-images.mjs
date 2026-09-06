@@ -36,7 +36,12 @@ const BRAND_DIR = resolve(HERE, '..', 'public', 'brand');
 
 const kio = (bytes) => `${(bytes / 1024).toFixed(1)} Kio`;
 
-const sources = readdirSync(BRAND_DIR).filter((f) => f.endsWith('.png'));
+// `og-cover.png` est exclu : il a son propre script, et il doit **rester** un PNG. Les robots qui
+// composent les apercus de liens (messageries, reseaux sociaux) ne decodent pas tous le WebP, et
+// un apercu vide est le seul cas ou le format moderne coute plus qu'il ne rapporte.
+const EXCLUDED = new Set(['og-cover.png']);
+
+const sources = readdirSync(BRAND_DIR).filter((f) => f.endsWith('.png') && !EXCLUDED.has(f));
 if (sources.length === 0) {
   console.error(`aucun PNG dans ${BRAND_DIR}`);
   process.exit(1);

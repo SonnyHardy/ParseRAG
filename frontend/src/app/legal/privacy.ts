@@ -1,6 +1,8 @@
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { LegalPage } from './legal-page';
 import { RAPIDAPI_URL } from '../landing/rapidapi';
+import { Seo } from '../seo/seo';
+import { pageFor } from '../seo/site';
 
 /**
  * Protection des donnees.
@@ -77,4 +79,10 @@ import { RAPIDAPI_URL } from '../landing/rapidapi';
 })
 export class Privacy {
   protected readonly rapidapi = RAPIDAPI_URL;
+
+  // Metadonnees posees pendant le prerendu (issue #71). Le second argument vaut `page` et non
+  // `home` : ces pages recoivent un fil d'Ariane, pas le balisage du produit ni celui de la FAQ.
+  constructor() {
+    inject(Seo).apply(pageFor('/privacy'));
+  }
 }

@@ -13,6 +13,8 @@ import { Faq } from './faq';
 import { FinalCta } from './final-cta';
 import { SiteFooter } from './site-footer';
 import { Motion } from './motion';
+import { Seo } from '../seo/seo';
+import { pageFor } from '../seo/site';
 
 /**
  * La landing page (issue #69), assemblee section par section dans l'ordre du design.
@@ -45,8 +47,13 @@ import { Motion } from './motion';
 export class LandingPage {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly motion = inject(Motion);
+  private readonly seo = inject(Seo);
 
   constructor() {
+    // Pose dans le constructeur, donc pendant le rendu serveur : les balises sont dans le HTML
+    // prerendu, sans qu'une ligne de JavaScript s'execute chez le visiteur (issues #70, #71).
+    this.seo.apply(pageFor('/'), 'home');
+
     afterNextRender(async () => {
       const api = await this.motion.load();
       if (!api) {
