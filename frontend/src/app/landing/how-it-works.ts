@@ -414,11 +414,19 @@ interface Stage {
 
     .block--on { border-left-color: var(--pr-red); }
 
+    /* Les trois couleurs de l'etat au repos passent le contraste AA, et ce n'est pas une
+       precaution theorique : sans JavaScript, active() vaut 0 et quatre blocs sur cinq restent
+       dans cet etat. Les valeurs precedentes tombaient a 2,61:1 pour l'intitule et 2,95:1 pour le
+       corps, sous le seuil de 4,5:1 exige d'un texte courant.
+
+       Le corps utilisait le jeton --pr-on-dark-muted, prevu pour les fonds sombres, sur un fond
+       creme : c'etait un lapsus, pas un reglage. La distinction actif / inactif ne repose donc
+       plus sur la clarte mais sur la couleur, le bloc actif passant au rouge et a l'encre. */
     .block__kicker {
       font-size: 12px;
       letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: var(--pr-mock-inactive);
+      color: var(--pr-muted);
       transition: color 0.3s ease;
     }
 
@@ -431,7 +439,7 @@ interface Stage {
       letter-spacing: -0.02em;
       line-height: 1.16;
       max-width: 26ch;
-      color: var(--pr-mock-inactive-text);
+      color: var(--pr-muted);
       transition: color 0.3s ease;
     }
 
@@ -441,7 +449,7 @@ interface Stage {
       margin: 0;
       font-size: 18px;
       line-height: 1.55;
-      color: var(--pr-on-dark-muted);
+      color: var(--pr-muted);
       max-width: 42ch;
       transition: color 0.3s ease;
     }

@@ -201,7 +201,10 @@ import { Motion, type MotionApi } from './motion';
       color: var(--pr-code-string);
     }
 
-    .qs .dim { color: var(--pr-muted); }
+    /* --pr-muted est un jeton de fond clair ; pose sur --pr-dark-deep il ne donnait que 3,16:1.
+       Son equivalent pour fond sombre monte a 5,98:1. Meme lapsus que dans how-it-works, pris en
+       miroir. */
+    .qs .dim { color: var(--pr-on-dark-muted); }
 
     .qs .qs__pre {
       padding: 24px 26px;

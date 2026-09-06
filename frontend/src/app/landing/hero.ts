@@ -76,13 +76,16 @@ import { Motion, type MotionApi } from './motion';
             <span class="pr-mono amber">POST /api/v1/parse</span>
           </div>
           <div class="engine__body">
-            <img
-              src="brand/wordmark-paper.png"
-              alt="ParseRAG"
-              width="632"
-              height="208"
-              class="engine__mark"
-            />
+            <picture>
+              <source srcset="brand/wordmark-paper.webp" type="image/webp" />
+              <img
+                src="brand/wordmark-paper.png"
+                alt="ParseRAG"
+                width="632"
+                height="208"
+                class="engine__mark"
+              />
+            </picture>
             <div class="engine__note">Column-aware extraction, verified against its own output.</div>
           </div>
         </div>

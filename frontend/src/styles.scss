@@ -5,8 +5,9 @@
 // Les nommer ici est ce qui rend le design modifiable : une couleur changee a un seul endroit
 // plutot qu'a quarante.
 //
-// Les polices sont chargees depuis Google Fonts dans index.html, comme dans le design.
-// L'auto-hebergement releve de l'issue #70, ou il se mesure avec le reste du budget.
+// Les polices sont auto-hebergees depuis l'issue #70 : `fonts.scss` est genere par
+// scripts/fetch-fonts.mjs et les fichiers vivent dans public/fonts/.
+@use 'fonts';
 @use 'primeicons/primeicons.css';
 
 :root {
@@ -100,6 +101,14 @@ a {
 
 ::selection {
   background: #efe1c8;
+}
+
+// `<picture>` n'existe que pour proposer un WebP avant le PNG (issue #70) ; il ne doit rien
+// changer a la mise en page. `display: contents` l'efface de l'arbre de disposition, de sorte que
+// l'`<img>` reste l'enfant direct du conteneur flex qui le positionne. Sans cela, les quatre
+// wordmarks deviennent des elements flex enveloppes et perdent leur alignement.
+picture {
+  display: contents;
 }
 
 // Le design animait ces elements avec GSAP depuis un CDN. Ils sont ici dans leur etat final,
