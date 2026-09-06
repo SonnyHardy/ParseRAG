@@ -1,15 +1,43 @@
 <pr-site-header />
 <main id="top">
   <pr-hero />
-  <pr-quick-start />
-  <pr-problem />
-  <pr-why-it-matters />
-  <pr-how-it-works />
-  <pr-second-pass />
-  <pr-output />
-  <pr-edge-cases />
-  <pr-plans />
-  <pr-faq />
-  <pr-final-cta />
+
+  <!-- Hydratation differee, section par section (issue #70).
+       ATTENTION au mot-cle : `hydrate on viewport`, et jamais `on viewport` seul. Les deux se
+       ressemblent et font le contraire l'un de l'autre. Un `@defer (on viewport)` ordinaire rend
+       le **substitut** cote serveur, donc le HTML servi perdrait dix sections sur onze : ce serait
+       precisement le defaut que cette issue existe pour ne pas reproduire. Avec `hydrate`, le
+       serveur rend le contenu complet et seule l'hydratation attend le defilement.
+       Un test verrouille la difference en cherchant le texte dans le HTML prerendu. -->
+  @defer (hydrate on viewport) {
+    <pr-quick-start />
+  }
+  @defer (hydrate on viewport) {
+    <pr-problem />
+  }
+  @defer (hydrate on viewport) {
+    <pr-why-it-matters />
+  }
+  @defer (hydrate on viewport) {
+    <pr-how-it-works />
+  }
+  @defer (hydrate on viewport) {
+    <pr-second-pass />
+  }
+  @defer (hydrate on viewport) {
+    <pr-output />
+  }
+  @defer (hydrate on viewport) {
+    <pr-edge-cases />
+  }
+  @defer (hydrate on viewport) {
+    <pr-plans />
+  }
+  @defer (hydrate on viewport) {
+    <pr-faq />
+  }
+  @defer (hydrate on viewport) {
+    <pr-final-cta />
+  }
 </main>
 <pr-site-footer />

@@ -57,11 +57,8 @@ export class Motion {
     }
     // La mesure de cadence tourne **en parallele** de l'import : elle ne coute donc rien, le
     // telechargement et l'analyse du paquet prenant de toute facon plus longtemps.
-    this.loading ??= Promise.all([
-      import('gsap'),
-      import('gsap/ScrollTrigger'),
-      this.framesFlow(),
-    ])
+    this.loading ??= this.whenIdle()
+      .then(() => Promise.all([import('gsap'), import('gsap/ScrollTrigger'), this.framesFlow()]))
       .then(([core, trigger, flowing]) => {
         if (!flowing) {
           return null;
@@ -71,6 +68,32 @@ export class Motion {
       })
       .catch(() => null);
     return this.loading;
+  }
+
+  /**
+   * Attend que le navigateur ait fini l'essentiel avant d'aller chercher la bibliotheque.
+   *
+   * Mesure sur le build de production : l'evaluation de GSAP formait une tache longue de **299 ms**
+   * juste apres le premier rendu, soit le plus gros poste du temps de blocage total. Elle ne
+   * servait pourtant a rien a cet instant : toutes les animations de la page sont declenchees au
+   * defilement, et le haut de page est deja peint. Reporter l'import a la premiere accalmie ne
+   * change donc rien a l'ecran et sort ces 299 ms de la fenetre ou Lighthouse, comme un visiteur,
+   * juge la page reactive.
+   *
+   * `timeout: 2000` : l'inactivite n'est pas garantie, un onglet occupe pouvant ne jamais l'offrir.
+   * Passe ce delai le navigateur execute le rappel de toute facon. Le `setTimeout` est le repli
+   * pour Safari, qui n'implemente toujours pas `requestIdleCallback`.
+   */
+  private whenIdle(): Promise<void> {
+    return new Promise((resolve) => {
+      const idle = (window as Window & { requestIdleCallback?: typeof requestIdleCallback })
+        .requestIdleCallback;
+      if (typeof idle === 'function') {
+        idle(() => resolve(), { timeout: 2000 });
+      } else {
+        setTimeout(resolve, 200);
+      }
+    });
   }
 
   /**

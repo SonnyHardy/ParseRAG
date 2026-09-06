@@ -11,7 +11,11 @@
     "prestart": "node scripts/check-template-literals.mjs && node scripts/write-license.mjs",
     "pretest": "node scripts/check-template-literals.mjs && node scripts/write-license.mjs",
     "prewatch": "node scripts/check-template-literals.mjs && node scripts/write-license.mjs",
-    "test:watch": "ng test"
+    "test:watch": "ng test",
+    "serve:dist": "node scripts/serve-dist.mjs",
+    "fonts:fetch": "node scripts/fetch-fonts.mjs",
+    "lighthouse": "node scripts/lighthouse.mjs",
+    "postbuild": "node scripts/check-prerender.mjs && node scripts/check-budget.mjs"
   },
   "private": true,
   "packageManager": "npm@11.10.0",
@@ -39,6 +43,7 @@
     "@types/node": "24.13.3",
     "jsdom": "28.1.0",
     "prettier": "3.9.6",
+    "sharp": "0.35.4",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
   }

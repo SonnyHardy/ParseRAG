@@ -1,4 +1,4 @@
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { providePrimeNG } from 'primeng/config';
 import { LandingPage } from './landing-page';
 import { RAPIDAPI_URL } from './rapidapi';
@@ -8,6 +8,11 @@ import { provideRouter } from '@angular/router';
  * Ce que ces tests protegent n'est pas l'apparence, qui se juge a l'oeil et changera, mais les
  * proprietes dont dependent les issues suivantes : une structure de titres exploitable (#71), un
  * contenu present sans JavaScript (#70, #72) et des liens sortants suivables (#74).
+ *
+ * **Sur « present sans JavaScript », ces tests ne prouvent rien**, et il faut le savoir en les
+ * lisant : ils montent les composants dans un navigateur simule, donc ils mesurent le DOM apres
+ * execution. La vraie garantie est ailleurs, dans scripts/check-prerender.mjs, qui lit le HTML
+ * produit par le build. Ce que les tests ci-dessous protegent, c'est la structure du contenu.
  */
 describe('Landing page', () => {
   let root: HTMLElement;
@@ -18,10 +23,26 @@ describe('Landing page', () => {
       // Le routeur est requis depuis que le pied de page pointe vers /terms et /privacy par
       // `routerLink` : sans lui la directive n'a pas de contexte et le montage echoue.
       providers: [providePrimeNG({}), provideRouter([])],
+      // Les sections sont dans des blocs `@defer (hydrate on viewport)` depuis l'issue #70. Le
+      // comportement par defaut de TestBed est `Manual` : les blocs ne rendent rien tant qu'on ne
+      // les declenche pas un par un, et dix sections sur onze disparaissaient de ces tests.
+      // `Playthrough` reproduit le comportement du navigateur.
+      deferBlockBehavior: DeferBlockBehavior.Playthrough,
     }).compileComponents();
 
     const fixture = TestBed.createComponent(LandingPage);
+    fixture.detectChanges();
     await fixture.whenStable();
+
+    // Les blocs `@defer (hydrate on viewport)` de l'issue #70 ne se declenchent pas d'eux-memes
+    // ici : leurs declencheurs `hydrate` n'existent que pendant l'hydratation d'un rendu serveur,
+    // et TestBed fait un rendu client. On les amene donc explicitement a leur etat complet, qui
+    // est celui d'un visiteur ayant fait defiler la page.
+    for (const block of await fixture.getDeferBlocks()) {
+      await block.render(DeferBlockState.Complete);
+    }
+    await fixture.whenStable();
+
     root = fixture.nativeElement as HTMLElement;
   });
 

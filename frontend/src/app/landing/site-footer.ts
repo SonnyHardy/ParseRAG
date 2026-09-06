@@ -19,7 +19,10 @@ import { RAPIDAPI_URL } from './rapidapi';
     <footer class="ft">
       <div class="pr-shell ft__inner">
         <div class="ft__brand">
-          <img src="brand/favicon-32.png" alt="" width="32" height="32" loading="lazy" class="ft__mark" />
+          <picture>
+            <source srcset="brand/favicon-32.webp" type="image/webp" />
+            <img src="brand/favicon-32.png" alt="" width="32" height="32" loading="lazy" class="ft__mark" />
+          </picture>
           <span class="ft__copy">&copy; {{ year }} ParseRAG</span>
         </div>
         <nav class="ft__links" aria-label="Footer">

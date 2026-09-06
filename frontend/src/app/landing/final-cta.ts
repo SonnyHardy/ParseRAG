@@ -9,14 +9,17 @@ import { RAPIDAPI_URL } from './rapidapi';
   template: `
     <section id="rapidapi" class="fc">
       <div class="pr-shell fc__inner">
-        <img
-          src="brand/wordmark-paper.png"
-          alt="ParseRAG"
-          width="632"
-          height="208"
-          loading="lazy"
-          class="fc__mark"
-        />
+        <picture>
+          <source srcset="brand/wordmark-paper.webp" type="image/webp" />
+          <img
+            src="brand/wordmark-paper.png"
+            alt="ParseRAG"
+            width="632"
+            height="208"
+            loading="lazy"
+            class="fc__mark"
+          />
+        </picture>
         <h2 class="fc__title">Give your RAG pipeline cleaner input.</h2>
         <p class="fc__sub">Subscribe on RapidAPI, grab your key, send your first PDF.</p>
         <a pButton class="pr-cta pr-cta--lg fc__cta" [href]="rapidapi" target="_blank" rel="noopener">

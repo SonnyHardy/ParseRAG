@@ -30,13 +30,17 @@ import { Motion } from './motion';
     <header class="hd">
       <nav class="hd__nav pr-shell" aria-label="Main">
         <a routerLink="/" aria-label="ParseRAG home" class="hd__home">
-          <img
-            src="brand/wordmark-ink.png"
-            alt="ParseRAG"
-            width="632"
-            height="208"
-            class="hd__mark"
-          />
+          <picture>
+            <source srcset="brand/wordmark-ink.webp" type="image/webp" />
+            <img
+              src="brand/wordmark-ink.png"
+              alt="ParseRAG"
+              width="632"
+              height="208"
+              fetchpriority="high"
+              class="hd__mark"
+            />
+          </picture>
         </a>
         <div class="hd__links">
           <a routerLink="/" fragment="how" class="hd__link">How it works</a>
