@@ -3,17 +3,7 @@ import { ButtonModule } from 'primeng/button';
 import { TagModule } from 'primeng/tag';
 import { RAPIDAPI_URL } from './rapidapi';
 import { Motion } from './motion';
-
-interface Plan {
-  /** Le nom du marketplace, jamais le notre. Voir la note sur le faux ami ci-dessous. */
-  readonly name: string;
-  readonly perMonth: string;
-  readonly perMinute: string;
-  readonly pages: string;
-  /** Part de la limite de pages du plan le plus haut, pour la barre. */
-  readonly share: number;
-  readonly free?: boolean;
-}
+import { PLANS, type Plan } from './plans-data';
 
 /**
  * Le tableau des plans.
@@ -294,18 +284,8 @@ export class Plans {
 
   protected readonly rapidapi = RAPIDAPI_URL;
 
-  /**
-   * La grille du listing (docs/rapidapi-listing-setup.md, « Grille proposee »). Les limites de
-   * pages sont celles que le backend applique reellement (`parserag.page-limits`) : les deux
-   * doivent bouger ensemble, un chiffre affiche plus haut que celui qui est applique se paie en
-   * `DOCUMENT_TOO_LONG` inattendu.
-   */
-  protected readonly plans: readonly Plan[] = [
-    { name: 'BASIC', perMonth: '50', perMinute: '2', pages: '100', share: 10, free: true },
-    { name: 'PRO', perMonth: '1,000', perMinute: '5', pages: '300', share: 30 },
-    { name: 'ULTRA', perMonth: '7,500', perMinute: '10', pages: '500', share: 50 },
-    { name: 'MEGA', perMonth: '50,000', perMinute: '20', pages: '1,000', share: 100 },
-  ];
+  /** La grille vit dans plans-data.ts depuis #71 : le JSON-LD la lit au meme endroit. */
+  protected readonly plans: readonly Plan[] = PLANS;
 
   constructor() {
     afterNextRender(async () => {

@@ -16,9 +16,10 @@ npm start        # serveur de developpement
 npm run build    # build de production, prerendu, puis controles de prerendu et de budget
 npm test         # vitest, sans mode veille
 
-npm run serve:dist   # sert dist/ comme Vercel : brotli et en-tetes de cache
-npm run lighthouse   # mediane de 5 passages mobile sur le serveur ci-dessus
-npm run fonts:fetch  # regenere public/fonts/ et src/fonts.scss (hors build)
+npm run serve:dist    # sert dist/ comme Vercel : brotli et en-tetes de cache
+npm run lighthouse    # mediane de 5 passages mobile sur le serveur ci-dessus
+npm run fonts:fetch   # regenere public/fonts/ et src/fonts.scss (hors build)
+npm run images:build  # regenere les WebP et l'image sociale (hors build)
 ```
 
 ## Le socle, et pourquoi il est ainsi (issue #67)
@@ -209,6 +210,94 @@ Reduire ce poste demande de rouvrir le choix de #67, pas d'ajuster #70. Les quat
 utilises sont un bouton, des onglets, un accordeon et un tag ; le bouton, en particulier, ne sert a
 rien ici, `.pr-cta` redefinissant deja tout son style a coups de `!important`. A chiffrer dans une
 issue dediee.
+
+## Referencement : metadonnees et donnees structurees (issue #71)
+
+Aucune page indexable au monde ne parle de ParseRAG : le depot est prive, et la fiche RapidAPI n'est
+dans aucun des huit sitemaps de rapidapi.com. Cette page est donc la seule surface de referencement
+du produit, et ce qu'elle declare compte autant que ce qu'elle dit.
+
+### Tout est genere depuis les donnees de la page
+
+C'est l'invariant qui structure `src/app/seo/`. Le JSON-LD ne recopie rien : les six questions de la
+FAQ viennent de `landing/faq-data.ts`, les quatre plans de `landing/plans-data.ts`, **les memes
+modules que les composants affichent**. Google demande que le balisage decrive ce que le visiteur
+voit ; ici, publier une reponse que la page n'affiche plus demanderait de la supprimer des deux
+endroits a la fois, ce qui n'arrive pas par distraction.
+
+Les titres suivent la meme regle : `app.routes.ts` lit ceux de `seo/site.ts`, la ou vivent aussi la
+description, la canonique et le sitemap.
+
+Un seul `<script type="application/ld+json">` par page, un graphe dont les entites se referencent
+par `@id`. L'accueil porte `Organization`, `WebSite`, `SoftwareApplication` et `FAQPage` ; les pages
+legales portent `Organization`, `WebSite`, `WebPage` et `BreadcrumbList`. Pas de fil d'Ariane sur
+l'accueil : a un seul echelon il n'apprend rien et Google le signale.
+
+### Le prix est dans le balisage et nulle part sur la page
+
+C'est une asymetrie voulue des deux cotes, et elle merite d'etre comprise avant d'etre modifiee.
+Le brief de design interdit tout montant a l'ecran, parce qu'un tarif recopie se perime sans que
+rien ne le signale ; l'issue #71 demande en revanche un bloc `offers` refletant les quatre plans, et
+un `Offer` sans prix n'a guere de sens. Chaque offre porte donc en `url` l'adresse ou ce prix est
+publie et facture, le listing RapidAPI. Un test verifie qu'aucun montant n'apparait dans le texte de
+la page ; un autre, que les quatre offres correspondent aux quatre plans du tableau.
+
+### Le sitemap ne peut pas mentir
+
+`scripts/build-seo-files.mjs` ecrit `robots.txt` et `sitemap.xml` dans la sortie du build, jamais a
+la main : un fichier maintenu a la main survit a la suppression de la page qu'il annonce.
+
+Deux details font le travail :
+
+- **La liste des pages vient du disque**, pas d'un tableau. Le script parcourt `dist/` et retient
+  chaque `index.html` prerendu ; il enumere donc exactement les pages qui existent.
+- **L'origine vient de la balise `canonical` de l'accueil**, pas d'une seconde declaration. Le
+  sitemap et les canoniques ne peuvent donc pas se contredire. Si la canonique manque, le script
+  echoue : c'est le signe que le prerendu n'a pas pose les metadonnees.
+
+Ni `lastmod`, ni `priority`, ni `changefreq`. Google ignore les deux derniers depuis des annees et
+attend du premier qu'il reflete une vraie modification de contenu ; rempli avec la date du build, il
+annoncerait que les trois pages changent a chaque deploiement.
+
+### L'image sociale
+
+`public/brand/og-cover.png`, en 1200x630, dessinee par `scripts/build-og-image.mjs`. Pas le logo
+carre : l'apercu d'un lien partage est presque toujours rogne au format paysage, et un logo carre y
+perd la moitie du nom.
+
+Le nom du produit y est **l'image du wordmark, pas du texte**, ce qui rend le lettrage de marque
+independant des polices installees sur la machine qui execute le script. Seule l'accroche est
+composee en texte et depend donc du systeme ; c'est acceptable parce que le PNG produit est
+versionne, mais il faut le savoir avant de relancer le script ailleurs.
+
+### Ce qui est verifie, et par quoi
+
+`scripts/check-seo.mjs` tourne en `postbuild`, donc en CI. Il automatise le critere de validation de
+l'issue — « un curl montre toutes les balises listees, sans exception » — sur les trois pages :
+`lang`, titre, description (longueur comprise), canonique **absolue et propre a la page**, les dix
+balises Open Graph, les cinq Twitter, l'existence reelle du fichier vise par `og:image`, et un
+unique bloc JSON-LD analysable portant les noeuds attendus.
+
+Une balise de referencement ne manque jamais bruyamment : la page s'affiche exactement pareil sans
+elle, et l'absence se paie des mois plus tard en indexation. C'est le profil exact d'un defaut qui
+doit faire echouer un build. Verifie par sabotage : poser la canonique de l'accueil sur `/terms`
+fait echouer la CI avec `canonical vers / au lieu de /terms`.
+
+Les tests unitaires, eux, ne verifient pas la presence des balises mais **la coherence** : que la
+FAQ balisee soit mot pour mot la FAQ affichee, que les offres soient les plans du tableau, que
+chaque route de l'application ait ses metadonnees, et que deux appels successifs au service `Seo`
+mettent a jour au lieu de dupliquer — le `<head>` n'etant pas hydrate par Angular, un service qui
+ajoute produirait deux canoniques.
+
+### Ce qui reste ouvert, et pourquoi
+
+**Le domaine n'est pas acquis.** `SITE_ORIGIN` porte `https://parserag.dev`, premier candidat de
+l'issue #73, et c'est le seul endroit a changer si l'arbitrage bascule.
+
+Trois cases de l'issue attendent la mise en ligne et ne peuvent pas etre cochees ici : la validation
+par l'outil de test des resultats enrichis, qui exige une URL publique ; la propriete Search Console
+et le sitemap soumis ; le compte Bing Webmaster Tools. Elles relevent du jour du deploiement, avec
+#73.
 
 ## Ce que PrimeNG coute, mesure au socle
 
