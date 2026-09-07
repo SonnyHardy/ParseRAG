@@ -17,7 +17,12 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(HERE, '..', 'dist', 'parserag-frontend', 'browser');
 
-const PAGES = ['index.html', 'terms/index.html', 'privacy/index.html'];
+const PAGES = [
+  'index.html',
+  'documentation/index.html',
+  'terms/index.html',
+  'privacy/index.html',
+];
 
 /** Balises `<meta name=...>` exigees sur chaque page. */
 const NAMED = [

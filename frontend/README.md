@@ -13,7 +13,7 @@ du produit.
 cd frontend
 npm ci
 npm start        # serveur de developpement
-npm run build    # build de production, prerendu, puis controles de prerendu et de budget
+npm run build    # build de production, prerendu, puis generation et controle des artefacts
 npm test         # vitest, sans mode veille
 
 npm run serve:dist    # sert dist/ comme Vercel : brotli et en-tetes de cache
@@ -298,6 +298,97 @@ Trois cases de l'issue attendent la mise en ligne et ne peuvent pas etre cochees
 par l'outil de test des resultats enrichis, qui exige une URL publique ; la propriete Search Console
 et le sitemap soumis ; le compte Bing Webmaster Tools. Elles relevent du jour du deploiement, avec
 #73.
+
+## Referencement pour les agents (issue #72)
+
+Une part croissante de la decouverte d'une API ne passe plus par une page de resultats mais par une
+reponse d'assistant. Le lecteur n'est alors pas quelqu'un qui parcourt une mise en page : c'est un
+extracteur qui cherche des faits. Deux consequences vont a rebours du reflexe du moment.
+
+**On veut etre lu par ces robots.** `robots.txt` autorise onze agents **nommement** — GPTBot,
+OAI-SearchBot, ChatGPT-User, ClaudeBot, Claude-User, anthropic-ai, PerplexityBot, Google-Extended,
+CCBot, Applebot-Extended, meta-externalagent. Un `Allow` nomme plutot que le seul `User-agent: *`,
+parce que plusieurs de ces robots appliquent par defaut une politique restrictive quand aucune regle
+ne les vise. Le silence n'y est pas lu comme une autorisation.
+
+**Le cas `Google-Extended` est tranche dans le script, pour ne pas rouvrir le debat** : il gouverne
+l'usage des pages dans les reponses generatives de Google et n'a aucun effet sur le classement dans
+la recherche classique. L'autoriser sert donc exactement ce que cette issue cherche, sans rien
+couter au referencement.
+
+### Il n'y a qu'une source, et les scripts la lisent
+
+C'est l'invariant du chantier. `build-agent-files.mjs` **importe les memes modules TypeScript** que
+les composants affichent — plans, questions, codes d'erreur, mesures, exemples de code. Node charge
+un `.ts` directement depuis sa version 23.6 ; la CI et Vercel sont sur Node 24.
+
+Cela vaut mieux qu'une discipline : ce qu'un agent lit et ce qu'un humain lit ne **peuvent pas**
+diverger, puisqu'il n'existe pas deux endroits ou les ecrire. `check-agent-files.mjs` verrouille la
+propriete en verifiant que chaque plan, chaque code d'erreur, chaque question et chaque exemple se
+retrouve dans `llms-full.txt`.
+
+Verifie par sabotage : ajouter un code d'erreur `PASSWORD_PROTECTED` aux donnees sans rien
+regenerer fait echouer le build sur `code d'erreur PASSWORD_PROTECTED absent`.
+
+### Les trois fichiers publies
+
+| URL | Pour qui |
+|---|---|
+| `/llms.txt` | L'entree courte : ce qu'est ParseRAG, les faits essentiels, les liens profonds. |
+| `/llms-full.txt` | Tout en un seul fichier : endpoint, exemples, plans, erreurs, FAQ. |
+| `/openapi.json` | Le contrat machine, pour l'agent qui veut generer un appel. |
+
+**`openapi.json` est une variante publiee, pas une copie.** Le snapshot de `docs/openapi.json` est
+genere par springdoc et decrit le deploiement **auto-heberge** : serveur `localhost`,
+authentification `X-API-Key`, contact pointant vers un depot prive. Publie tel quel, il ferait
+generer a un agent un appel vers localhost avec le mauvais en-tete, et l'API passerait pour cassee
+avant d'avoir ete essayee. Les trois corrections sont celles du runbook
+(`docs/rapidapi-listing-setup.md`, etape 2, pieges 1 a 3), appliquees a la volee.
+
+Une limite assumee : la prose generee par springdoc mentionne encore `X-API-Key` dans la description
+generale et dans celle d'une reponse 401. C'est exact — elle decrit les deux chemins de deploiement
+— et la corriger demanderait de la chirurgie de chaines sur un artefact genere, ce qui casserait au
+premier changement de formulation.
+
+### Une page `/documentation`, hors du chemin de conversion
+
+Les faits de reference — la requete, la reponse, les limites, les dix codes d'erreur — vivent sur
+une page a eux (`src/app/documentation/`), pas sur la vitrine.
+
+**Une premiere version les posait sur la page d'accueil, et c'etait une erreur de destination.**
+Dix codes HTTP ne servent pas un visiteur qui decide, ils servent quelqu'un qui integre. La page
+d'accueil n'a qu'une fonction, convertir une visite en abonnement ; l'allonger de contenu de
+reference coutait 6,7 Ko et 99 elements de DOM sur le chemin de conversion, alors que le blocage
+residuel de cette page est justement le temps de blocage (#70).
+
+La page est donc **absente de la barre de navigation** et n'a qu'un lien, en pied de page. Elle est
+en revanche dans le `sitemap.xml`, dans `llms.txt` et dans `llms-full.txt` : trouvable par qui la
+cherche, humain ou robot, sans peser sur la page qui doit convaincre.
+
+Son contenu vient des memes modules que le reste — exemples de `code-snippets.ts`, limites
+composees depuis `plans-data.ts`, erreurs de `errors-data.ts`. Une documentation qui divergerait de
+la page serait pire qu'absente.
+
+### Les exemples sont dans de vrais `<pre><code>`
+
+Avec de vrais caracteres de fin de ligne, et la nuance n'est pas academique. Une premiere version
+separait les lignes par `display: block` : le rendu etait identique a l'oeil et le texte extrait
+tenait sur **une seule ligne**. Un exemple de code sur une ligne est inutilisable, pour un agent
+comme pour un copier-coller.
+
+Deux pieges rencontres au passage, tous deux silencieux : une interpolation dont le resultat ne
+contient que du blanc est supprimee a la compilation, et un bloc de controle dont le corps n'est
+qu'un retour a la ligne aussi. Colle a du texte reel, le caractere survit.
+
+### Ce qui reste ouvert
+
+**`docs/openapi.json` vit a la racine du depot, hors de `frontend/`.** Le build le lit et echoue
+bruyamment s'il ne le trouve pas. Sur Vercel, dont le *Root Directory* pointe sur `frontend`, cela
+suppose que la construction inclue les fichiers exterieurs : c'est une dependance a verifier en #73,
+et le message d'erreur du script y renvoie.
+
+Le critere de validation de l'issue — poser a un assistant une question sur l'extraction de tableaux
+en fournissant le site comme source — demande un site en ligne. Il releve de #73.
 
 ## Ce que PrimeNG coute, mesure au socle
 

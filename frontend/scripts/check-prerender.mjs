@@ -41,6 +41,12 @@ const EXPECTED = {
     'Image-only pages skip native extraction',
     'Give your RAG pipeline cleaner input',
   ],
+  'documentation/index.html': [
+    'Using the ParseRAG endpoint',
+    'multipart/form-data',
+    'DOCUMENT_TOO_LONG',
+    'FILE_TOO_LARGE',
+  ],
   'terms/index.html': ['ParseRAG: Terms of Use'],
   'privacy/index.html': ['Privacy and data protection'],
 };

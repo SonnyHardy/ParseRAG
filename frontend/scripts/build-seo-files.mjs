@@ -73,10 +73,40 @@ ${urls}
 </urlset>
 `;
 
+// Les robots d'IA, **nommes un par un** (issue #72).
+//
+// C'est l'inverse du reflexe du moment, et c'est delibere : on **veut** etre lu par ces agents.
+// Aucune page indexable au monde ne parle de ParseRAG, le depot etant prive et la fiche RapidAPI
+// absente des sitemaps du marketplace ; une part croissante de la decouverte d'API passe par une
+// reponse d'assistant. Bloquer ces robots fermerait le seul canal qui reste.
+//
+// Un `Allow` nomme plutot que le seul `User-agent: *` : plusieurs de ces robots appliquent par
+// defaut une politique restrictive quand aucune regle ne les vise explicitement. Le silence n'y
+// est pas lu comme une autorisation.
+//
+// **Le cas `Google-Extended` est tranche ici pour ne pas rouvrir le debat** : il gouverne l'usage
+// des pages dans les reponses generatives de Google et n'a **aucun effet sur le classement dans la
+// recherche classique**. L'autoriser sert donc exactement ce que cette issue cherche, sans rien
+// couter au referencement.
+const AI_AGENTS = [
+  'GPTBot',
+  'OAI-SearchBot',
+  'ChatGPT-User',
+  'ClaudeBot',
+  'Claude-User',
+  'anthropic-ai',
+  'PerplexityBot',
+  'Google-Extended',
+  'CCBot',
+  'Applebot-Extended',
+  'meta-externalagent',
+];
+
 // `Allow: /` explicite plutot qu'un fichier vide : les deux ont le meme effet, mais celui-ci
 // enonce une intention et se relit. La ligne qui compte est `Sitemap`, seul moyen de declarer le
 // fichier a un moteur qui n'est pas passe par une console de webmestre.
-const robots = `User-agent: *
+const robots = `${AI_AGENTS.map((agent) => `User-agent: ${agent}\nAllow: /\n`).join('\n')}
+User-agent: *
 Allow: /
 
 Sitemap: ${origin}/sitemap.xml
@@ -89,4 +119,6 @@ console.log(`OK      sitemap.xml          ${routes.length} routes, origine ${ori
 for (const route of routes) {
   console.log(`          ${origin}${route}`);
 }
-console.log('OK      robots.txt           Allow + Sitemap');
+console.log(
+  `OK      robots.txt           ${AI_AGENTS.length} agents IA autorises nommement + Sitemap`,
+);

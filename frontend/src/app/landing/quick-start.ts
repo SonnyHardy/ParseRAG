@@ -64,18 +64,7 @@ import { Motion, type MotionApi } from './motion';
                 @for (snippet of snippets; track snippet.id) {
                   <p-tabpanel [value]="snippet.id">
                     <div class="pr-scroll-x">
-                      <div class="qs__pre pr-mono">
-                        @for (line of snippet.lines; track $index; let last = $last) {
-                          <div class="qs__line">
-                            @for (token of line; track $index) {
-                              <span [class]="'tk tk--' + token[0]">{{ token[1] }}</span>
-                            }
-                            @if (last) {
-                              <span class="qs__caret" aria-hidden="true"></span>
-                            }
-                          </div>
-                        }
-                      </div>
+                      <pre class="qs__pre pr-mono"><code>@for (line of snippet.lines; track $index; let last = $last) {<span class="qs__line">@for (token of line; track $index; let lastToken = $last) {<span [class]="'tk tk--' + token[0]">{{ token[1] }}{{ lastToken && !last ? newline : '' }}</span>}@if (last) {<span class="qs__caret" aria-hidden="true"></span>}</span>}</code></pre>
                     </div>
                   </p-tabpanel>
                 }
@@ -92,15 +81,7 @@ import { Motion, type MotionApi } from './motion';
               <span class="qs__pill">200 OK <span class="dim">1.84s</span></span>
             </div>
             <div class="pr-scroll-x">
-              <div class="qs__pre pr-mono">
-                @for (line of responseLines; track $index) {
-                  <div class="qs__resp-line">
-                    @for (token of line; track $index) {
-                      <span [class]="'tk tk--' + token[0]">{{ token[1] }}</span>
-                    }
-                  </div>
-                }
-              </div>
+              <pre class="qs__pre pr-mono"><code>@for (line of responseLines; track $index; let lastLine = $last) {<span class="qs__resp-line">@for (token of line; track $index; let lastToken = $last) {<span [class]="'tk tk--' + token[0]">{{ token[1] }}{{ lastToken && !lastLine ? newline : '' }}</span>}</span>}</code></pre>
             </div>
           </div>
         </div>
@@ -206,13 +187,38 @@ import { Motion, type MotionApi } from './motion';
        miroir. */
     .qs .dim { color: var(--pr-on-dark-muted); }
 
+    /* Un vrai <pre><code> depuis l'issue #72, et non plus un empilement de div stylees. Le rendu
+       est identique ; ce qui change est ce qu'un extracteur en tire. Les trois exemples sont la
+       reponse a « comment appeler cette API », et un agent les reconnait comme du code parce que
+       la balise le dit, pas parce que la police est a chasse fixe.
+
+       <pre> n'accepte que du contenu de phrase : les lignes sont donc des <span> repasses en
+       blocs, et non des <div>, qui y seraient invalides. Le gabarit est ecrit sans retour a la
+       ligne entre les balises, parce que <pre> conserve les espaces et qu'Angular ne supprime
+       l'indentation qu'entre elements. */
     .qs .qs__pre {
+      margin: 0;
       padding: 24px 26px;
+      font-family: inherit;
       font-size: 15px;
       line-height: 1.85;
       color: var(--pr-code-text);
       white-space: pre;
     }
+
+    .qs .qs__pre code {
+      font-family: inherit;
+      font-size: inherit;
+    }
+
+    /* Les lignes ne sont pas des blocs : ce qui les separe est un vrai caractere de fin de ligne,
+       accroche au texte du dernier jeton de chacune. Un display: block aurait donne le meme rendu
+       a l'oeil et laisse le texte extrait sur une seule ligne, ce que l'issue #72 corrige.
+
+       Il est accroche a un jeton plutot qu'interpole seul, et la nuance a coute plusieurs essais :
+       une interpolation dont le resultat ne contient que du blanc est supprimee a la compilation,
+       tout comme un bloc de controle dont le corps n'est qu'un retour a la ligne. Colle a du
+       texte reel, il survit. */
 
     /* ---- Coloration syntaxique ---- */
     .qs .tk--k { color: var(--pr-code-keyword); }
@@ -327,6 +333,16 @@ export class QuickStart implements OnDestroy {
   private responseShown = false;
 
   protected readonly rapidapi = RAPIDAPI_URL;
+
+  /**
+   * Le retour a la ligne, pose comme donnee et non comme mise en page.
+   *
+   * Dans un `<pre>`, ce qui separe deux lignes doit etre un vrai caractere : c'est lui que
+   * recupere un agent qui lit le texte, et lui seul que copie le presse-papiers. Une premiere
+   * version separait les lignes par `display: block`, ce qui donnait le meme rendu a l'oeil et
+   * rendait `curl -X POST \  https://...` sur une seule ligne a l'extraction.
+   */
+  protected readonly newline = '\n';
   protected readonly snippets = SNIPPETS;
   protected readonly responseLines = RESPONSE_LINES;
   protected readonly lang = signal<Snippet['id']>('curl');

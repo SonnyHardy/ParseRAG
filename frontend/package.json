@@ -15,7 +15,7 @@
     "serve:dist": "node scripts/serve-dist.mjs",
     "fonts:fetch": "node scripts/fetch-fonts.mjs",
     "lighthouse": "node scripts/lighthouse.mjs",
-    "postbuild": "node scripts/check-prerender.mjs && node scripts/build-seo-files.mjs && node scripts/check-seo.mjs && node scripts/check-budget.mjs",
+    "postbuild": "node scripts/check-prerender.mjs && node scripts/build-seo-files.mjs && node scripts/build-agent-files.mjs && node scripts/check-seo.mjs && node scripts/check-agent-files.mjs && node scripts/check-budget.mjs",
     "images:build": "node scripts/build-images.mjs && node scripts/build-og-image.mjs"
   },
   "private": true,
