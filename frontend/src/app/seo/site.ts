@@ -65,6 +65,13 @@ export const SITE_PAGES: readonly SitePage[] = [
     priority: '1.0',
   },
   {
+    path: '/documentation',
+    title: 'API documentation | ParseRAG',
+    description:
+      'How to call the ParseRAG PDF parsing API: the multipart request, the JSON response, the size and page limits, and every error code the endpoint can return.',
+    priority: '0.6',
+  },
+  {
     path: '/terms',
     title: 'Terms of Use | ParseRAG',
     description:

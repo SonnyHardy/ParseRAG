@@ -9,8 +9,13 @@ import { RAPIDAPI_URL } from './rapidapi';
  * deux vraies destinations, /terms et /privacy, plutot que reproduit : un lien qui ne mene pas
  * ou il annonce est pire qu'un lien absent.
  *
- * routerLink et non href sur ces deux-la : la navigation reste interne, sans rechargement.
- * Le lien RapidAPI, lui, est bien un href externe avec rel="noopener".
+ * routerLink et non href sur les liens internes : la navigation reste interne, sans
+ * rechargement. Le lien RapidAPI, lui, est bien un href externe avec rel="noopener".
+ *
+ * **Le lien vers la documentation n'existe qu'ici**, et pas dans la barre de navigation. Cette
+ * page est de la reference : elle sert qui integre, pas qui decide, et la barre haute est le
+ * chemin de conversion (issue #72). Un lien en pied de page suffit a la rendre trouvable par un
+ * lecteur comme par un robot, sans la mettre en travers de l'abonnement.
  */
 @Component({
   selector: 'pr-site-footer',
@@ -28,6 +33,7 @@ import { RAPIDAPI_URL } from './rapidapi';
         <nav class="ft__links" aria-label="Footer">
           <a [href]="rapidapi" target="_blank" rel="noopener">RapidAPI</a>
           <a routerLink="/" fragment="start">Quick start</a>
+          <a routerLink="/documentation">Documentation</a>
           <a routerLink="/terms">Terms of Use</a>
           <a routerLink="/privacy">Privacy</a>
         </nav>

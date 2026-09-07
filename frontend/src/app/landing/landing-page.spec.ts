@@ -52,7 +52,7 @@ describe('Landing page', () => {
     expect(titles[0].textContent).toContain('Turn PDFs into RAG-ready data');
   });
 
-  it('rend les dix sections de la page', () => {
+  it('rend les onze sections de la page', () => {
     const headings = Array.from(root.querySelectorAll('h1, h2')).map((h) => h.textContent?.trim());
     for (const expected of [
       'Turn PDFs into RAG-ready data.',
@@ -88,6 +88,19 @@ describe('Landing page', () => {
     expect(text).toContain('curl -X POST');
     expect(text).toContain('import requests');
     expect(text).toContain('MultipartBody.Builder');
+  });
+
+  // Dans un <pre>, ce qui separe deux lignes doit etre un vrai caractere de fin de ligne. Une
+  // premiere version les separait par `display: block` : le rendu etait identique et le texte
+  // extrait tenait sur une seule ligne, ce qui rend un exemple de code inutilisable pour un agent
+  // comme pour un copier-coller (issue #72).
+  it('donne aux exemples de vraies balises pre et de vraies fins de ligne', () => {
+    const blocks = Array.from(root.querySelectorAll('pre'));
+    expect(blocks.length).toBeGreaterThanOrEqual(4);
+    const curl = blocks.find((b) => (b.textContent ?? '').includes('curl -X POST'));
+    expect(curl).toBeDefined();
+    expect(curl!.textContent).toContain('\n');
+    expect((curl!.textContent ?? '').split('\n').length).toBeGreaterThanOrEqual(4);
   });
 
   // Les cinq etapes sont dans le DOM des le premier rendu ; le defilement ne fait qu'en mettre
