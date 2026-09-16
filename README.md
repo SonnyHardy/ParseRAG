@@ -1,4 +1,4 @@
-# ParseRAG
+# ParseRAG ([Test link on RapidAPI](https://rapidapi.com/parserag-parserag-default/api/parserag))
 
 **ParseRAG turns any PDF into clean, structured JSON for your RAG pipeline.**
 
